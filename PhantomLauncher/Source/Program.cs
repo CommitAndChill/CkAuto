@@ -11,6 +11,8 @@ class Program
     private static Process gameProcess;
     private static readonly string baseDir = AppDomain.CurrentDomain.BaseDirectory;
     private static readonly ManualResetEvent exitEvent = new ManualResetEvent(false);
+    private static bool isGameRunning = false;
+    private static bool isServerCrashed = false;
 
     // P/Invoke declarations for console control handling
     [DllImport("Kernel32")]
@@ -68,7 +70,7 @@ class Program
                 }
             };
             serverProcess.EnableRaisingEvents = true;
-            serverProcess.Exited += (s, e) => { exitEvent.Set(); };
+            serverProcess.Exited += ServerProcess_Exited;
             serverProcess.Start();
 
             // Start game
@@ -86,10 +88,16 @@ class Program
             gameProcess.EnableRaisingEvents = true;
             gameProcess.Exited += (s, e) => 
             { 
-                KillExistingProcesses();
-                exitEvent.Set();
+                isGameRunning = false;
+                // Only trigger exit if this wasn't due to a server crash
+                if (!isServerCrashed)
+                {
+                    KillExistingProcesses();
+                    exitEvent.Set();
+                }
             };
             gameProcess.Start();
+            isGameRunning = true;
 
             // Wait for exit signal
             exitEvent.WaitOne();
@@ -97,6 +105,32 @@ class Program
         finally
         {
             CleanupProcesses();
+        }
+    }
+
+    private static void ServerProcess_Exited(object sender, EventArgs e)
+    {
+        if (isGameRunning)
+        {
+            isServerCrashed = true;
+            
+            // Kill the game process first
+            if (gameProcess != null && !gameProcess.HasExited)
+            {
+                try { gameProcess.Kill(true); } catch { }
+            }
+            
+            MessageBox.Show(
+                "Unfortunately, the server closed unexpectedly. Please restart PhantomLauncher.",
+                "Server Error",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error
+            );
+            exitEvent.Set();
+        }
+        else
+        {
+            exitEvent.Set();
         }
     }
 
@@ -140,5 +174,4 @@ class Program
             try { proc.Kill(true); } catch { }
         }
     }
-
 }
