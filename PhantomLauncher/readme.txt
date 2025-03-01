@@ -8,5 +8,5 @@ Usage instructions:
 
 This was compiled with the following command line arguments:
 * Server: -log="CkProjectPhantom.log"
-* Game: -ExecCmds="ps.eos.enabled 0" -NoWatermark 127.0.0.1:7777
+* Game: -ExecCmds="ps.eos.enabled 0, ck.UI.WatermarkDisplayPolicy 0" 127.0.0.1:7777
 
