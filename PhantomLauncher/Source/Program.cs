@@ -80,7 +80,7 @@ class Program
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = gamePath,
-                    Arguments = "-ExecCmds=\"ps.eos.enabled 0, ck.UI.WatermarkDisplayPolicy 0\" 127.0.0.1:7777",
+                    Arguments = "-ExecCmds=\"ps.eos.enabled 0, ck.UI.WatermarkDisplayPolicy 0\" 127.0.0.1:7777 -NOSCREENMESSAGES",
                     UseShellExecute = true,
                     WorkingDirectory = Path.Combine(baseDir, "Game")
                 }
