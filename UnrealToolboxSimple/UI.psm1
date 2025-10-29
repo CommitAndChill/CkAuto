@@ -3,25 +3,44 @@
 # ============================================================================
 
 function Read-SingleKey {
-    param([int]$TimeoutMilliseconds = -1)
+    param([int]$TimeoutMilliseconds = 0)
     
-    if ($TimeoutMilliseconds -gt 0) {
+    if ($TimeoutMilliseconds -eq 0) {
+        # Blocking - wait indefinitely
+        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        
+        if ($key.VirtualKeyCode -eq 27 -or [int][char]$key.Character -eq 27) { 
+            return 27 
+        }
+        if ($key.VirtualKeyCode -eq 13) { 
+            return 13 
+        }
+        
+        return $key.Character.ToString().ToUpper()
+    }
+    else {
+        # Non-blocking with timeout
         $startTime = Get-Date
-        while (-not $Host.UI.RawUI.KeyAvailable) {
-            $elapsed = ((Get-Date) - $startTime).TotalMilliseconds
-            if ($elapsed -ge $TimeoutMilliseconds) {
-                return $null
+        
+        do {
+            if ([Console]::KeyAvailable) {
+                $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                
+                if ($key.VirtualKeyCode -eq 27 -or [int][char]$key.Character -eq 27) { 
+                    return 27 
+                }
+                if ($key.VirtualKeyCode -eq 13) { 
+                    return 13 
+                }
+                
+                return $key.Character.ToString().ToUpper()
             }
             Start-Sleep -Milliseconds 50
-        }
+            $elapsed = ((Get-Date) - $startTime).TotalMilliseconds
+        } while ($elapsed -lt $TimeoutMilliseconds)
+        
+        return $null
     }
-    
-    if ($Host.UI.RawUI.KeyAvailable) {
-        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-        return $key.Character
-    }
-    
-    return $null
 }
 
 function Test-ProjectRunning {
