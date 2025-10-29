@@ -253,7 +253,7 @@ function Show-MainMenu {
     # Option 6: Combined
     $color6 = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } else { "Cyan" }
     $suffix6 = if (-not $hasSubmodules) { " (no .gitmodules)" } else { "" }
-    Write-Host "  [6] 🚀 Update Submodules → Generate → Build" -NoNewline -ForegroundColor $color6
+    Write-Host "  [6] 🚀 Update Submodules → Generate → Build → Launch" -NoNewline -ForegroundColor $color6
     if ($combinedTime) {
         Write-Host $combinedTime -NoNewline -ForegroundColor DarkGray
     }
@@ -360,7 +360,7 @@ function Show-MainMenu {
                 Write-Host "`nNo .gitmodules file found!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
             } else {
-                if (Show-Confirmation "Run combined operation (Update → Generate → Build)?") {
+                if (Show-Confirmation "Run combined operation (Update → Generate → Build → Launch)?") {
                     & $saveSettings
                     Invoke-CombinedOperation -Target $targetName -Config $script:BuildConfig -Platform $script:BuildPlatform `
                         -ProjectPath $script:CurrentProject -Engine $script:CurrentEngine -Settings $script:ProjectSettings

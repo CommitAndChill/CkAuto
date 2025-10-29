@@ -166,7 +166,7 @@ function Invoke-CombinedOperation {
 
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "🚀 COMBINED OPERATION: Update Submodules → Generate → Build" -ForegroundColor Cyan
+    Write-Host "🚀 COMBINED OPERATION: Update Submodules → Generate → Build → Launch" -ForegroundColor Cyan
     Write-Host "═══════════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
     Write-Host ""
 
@@ -174,9 +174,10 @@ function Invoke-CombinedOperation {
     $submodulesTime = 0
     $generateTime = 0
     $buildTime = 0
+    $launchTime = 0
 
     # Step 1: Update Submodules
-    Write-Host "[1/3] Updating Git Submodules..." -ForegroundColor Yellow
+    Write-Host "[1/4] Updating Git Submodules..." -ForegroundColor Yellow
     $stepStart = Get-Date
     $success = Invoke-UpdateSubmodules -CurrentProject $ProjectPath
     $submodulesTime = ((Get-Date) - $stepStart).TotalSeconds
@@ -192,7 +193,7 @@ function Invoke-CombinedOperation {
     }
 
     # Step 2: Generate Project Files
-    Write-Host "[2/3] Generating Project Files..." -ForegroundColor Yellow
+    Write-Host "[2/4] Generating Project Files..." -ForegroundColor Yellow
     $stepStart = Get-Date
     $success = Invoke-GenerateProjectFiles -Engine $Engine -ProjectPath $ProjectPath -Settings $Settings
     $generateTime = ((Get-Date) - $stepStart).TotalSeconds
@@ -208,7 +209,7 @@ function Invoke-CombinedOperation {
     }
 
     # Step 3: Build Project
-    Write-Host "[3/3] Building Project..." -ForegroundColor Yellow
+    Write-Host "[3/4] Building Project..." -ForegroundColor Yellow
     $stepStart = Get-Date
     $success = Invoke-BuildProject -Target $Target -Config $Config -Platform $Platform `
         -ProjectPath $ProjectPath -Engine $Engine -Settings $Settings
@@ -220,6 +221,22 @@ function Invoke-CombinedOperation {
     
     if (-not $success) {
         Write-Host "❌ Combined operation failed at step 3 (Build)" -ForegroundColor Red
+        Read-Host "Press Enter to continue"
+        return
+    }
+
+    # Step 4: Launch Editor
+    Write-Host "[4/4] Launching Unreal Editor..." -ForegroundColor Yellow
+    $stepStart = Get-Date
+    $success = Invoke-LaunchEditor -EnginePath $Engine.Path -ProjectPath $ProjectPath
+    $launchTime = ((Get-Date) - $stepStart).TotalSeconds
+    
+    Write-Host "      Step completed in " -NoNewline -ForegroundColor DarkGray
+    Write-Host (Format-ExecutionTime $launchTime) -ForegroundColor Cyan
+    Write-Host ""
+    
+    if (-not $success) {
+        Write-Host "❌ Combined operation failed at step 4 (Launch Editor)" -ForegroundColor Red
         Read-Host "Press Enter to continue"
         return
     }
@@ -238,6 +255,8 @@ function Invoke-CombinedOperation {
     Write-Host (Format-ExecutionTime $generateTime) -ForegroundColor Cyan
     Write-Host "  Build:             " -NoNewline -ForegroundColor Gray
     Write-Host (Format-ExecutionTime $buildTime) -ForegroundColor Cyan
+    Write-Host "  Launch Editor:     " -NoNewline -ForegroundColor Gray
+    Write-Host (Format-ExecutionTime $launchTime) -ForegroundColor Cyan
     Write-Host "  " -NoNewline
     Write-Host "─────────────────────" -ForegroundColor DarkGray
     Write-Host "  Total:             " -NoNewline -ForegroundColor Yellow
@@ -293,6 +312,51 @@ function Invoke-UnrealBuildTool {
     $process.WaitForExit()
     
     return $process.ExitCode -eq 0
+}
+
+function Invoke-LaunchEditor {
+    param(
+        [string]$EnginePath,
+        [string]$ProjectPath
+    )
+    
+    Write-Host ""
+    Write-Host "Launching Unreal Editor..." -ForegroundColor Yellow
+    
+    # Find editor executable (UE5 uses UnrealEditor.exe, UE4 uses UE4Editor.exe)
+    $editorPath = Join-Path $EnginePath "Engine\Binaries\Win64\UnrealEditor.exe"
+    
+    if (-not (Test-Path $editorPath)) {
+        $editorPath = Join-Path $EnginePath "Engine\Binaries\Win64\UE4Editor.exe"
+    }
+    
+    if (-not (Test-Path $editorPath)) {
+        Write-Host "Editor executable not found!" -ForegroundColor Red
+        return $false
+    }
+    
+    Write-Host ""
+    Write-Host "Command: " -NoNewline -ForegroundColor Gray
+    Write-Host ('"' + $editorPath + '" "' + $ProjectPath + '"') -ForegroundColor Cyan
+    Write-Host ""
+    
+    try {
+        # Launch editor as a new process (don't wait for it to exit)
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $editorPath
+        $psi.Arguments = '"' + $ProjectPath + '"'
+        $psi.UseShellExecute = $true
+        $psi.CreateNoWindow = $false
+        
+        [void][System.Diagnostics.Process]::Start($psi)
+        
+        Write-Host "Editor launched successfully!" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Host "Failed to launch editor: $_" -ForegroundColor Red
+        return $false
+    }
 }
 
 function Show-SwitchEngineMenu {
@@ -363,5 +427,6 @@ Export-ModuleMember -Function @(
     'Invoke-CleanProject',
     'Invoke-UpdateSubmodules',
     'Invoke-CombinedOperation',
+    'Invoke-LaunchEditor',
     'Show-SwitchEngineMenu'
 )
