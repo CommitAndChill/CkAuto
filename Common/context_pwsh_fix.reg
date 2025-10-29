@@ -1,0 +1,52 @@
+Windows Registry Editor Version 5.00
+; author: eterna1_0blivion
+
+[-HKEY_CLASSES_ROOT\Microsoft.PowerShellScript.1\Shell\PowerShell7x64]
+[-HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1]
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1]
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell]
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu]
+"MUIVerb"="PowerShell"
+"Icon"="C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+"SubCommands"=""
+
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu\Shell\0.PowerShell7.Run]
+"MUIVerb"="Run with PowerShell 7"
+"Icon"="C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+"CommandFlags"=dword:00000020
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu\Shell\0.PowerShell7.Run\Command]
+@="C:\\Program Files\\PowerShell\\7\\pwsh.exe -Command \"$host.UI.RawUI.WindowTitle = 'PowerShell 7 (x64)'; & {Set-ExecutionPolicy -Scope Process Bypass}; & \\\"%1\\\" \""
+
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu\Shell\1.PowerShell7.Run.Admin]
+"MUIVerb"="Run with PowerShell 7 as Admin"
+"Icon"="C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+"HasLUAShield"=""
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu\Shell\1.PowerShell7.Run.Admin\Command]
+@="C:\\Program Files\\PowerShell\\7\\pwsh.exe -WindowStyle Hidden -Command \"& {Start-Process pwsh.exe -ArgumentList \"\"\"-ExecutionPolicy Bypass -File \\\"\\\"%1\\\"\\\"\"\"\" -Verb RunAs} \""
+
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu\Shell\2.PowerShell5.Run]
+"MUIVerb"="Run with PowerShell 5"
+"Icon"="C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+"CommandFlags"=dword:00000020
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu\Shell\2.PowerShell5.Run\Command]
+@="C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command \"& {Set-ExecutionPolicy -Scope Process Bypass}; & \\\"%1\\\" \""
+
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu\Shell\3.PowerShell5.Run.Admin]
+"MUIVerb"="Run with PowerShell 5 as Admin"
+"Icon"="C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+"HasLUAShield"=""
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu\Shell\3.PowerShell5.Run.Admin\Command]
+@="C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -WindowStyle Hidden -Command \"& {Start-Process PowerShell.exe -ArgumentList \"\"\"-ExecutionPolicy Bypass -File \\\"\\\"%1\\\"\\\"\"\"\" -Verb RunAs} \""
+
+
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu\Shell\4.PowerShell.ISE]
+"MUIVerb"="Edit with ISE"
+"Icon"="C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell_ise.exe"
+"CommandFlags"=dword:00000020
+[HKEY_CLASSES_ROOT\SystemFileAssociations\.ps1\Shell\CascadeMenu\Shell\4.PowerShell.ISE\Command]
+@="C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell_ise.exe \"%1\""
