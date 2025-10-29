@@ -335,8 +335,7 @@ function Show-SwitchEngineMenu {
     }
     
     $keyChar = $key.Character.ToString()
-    if ($keyChar -match '^\d
-) {
+    if ($keyChar -match '^\d$') {
         $index = [int]$keyChar - 1
         if ($index -ge 0 -and $index -lt $engines.Count) {
             $engine = $engines[$index]

@@ -333,10 +333,8 @@ function Show-MainMenu {
                 Write-Host "`nCannot switch engine while editor is running!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
             } else {
-                if (Show-Confirmation "Switch engine?") {
-                    Show-SwitchEngineMenu -CurrentEngine ([ref]$script:CurrentEngine) `
-                        -AvailableEngines $script:AvailableEngines -CurrentProject $script:CurrentProject
-                }
+                Show-SwitchEngineMenu -CurrentEngine ([ref]$script:CurrentEngine) `
+                    -AvailableEngines $script:AvailableEngines -CurrentProject $script:CurrentProject
                 Show-MainMenu -ForceClear
                 return
             }
