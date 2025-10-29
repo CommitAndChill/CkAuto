@@ -295,10 +295,74 @@ function Invoke-UnrealBuildTool {
     return $process.ExitCode -eq 0
 }
 
+function Show-SwitchEngineMenu {
+    param(
+        [Parameter(Mandatory)]
+        [ref]$CurrentEngine,
+        [Parameter(Mandatory)]
+        [array]$AvailableEngines,
+        [string]$CurrentProject
+    )
+    
+    if (-not $CurrentProject) {
+        Write-Host "No project!" -ForegroundColor Red
+        Start-Sleep -Seconds 1
+        return
+    }
+    
+    Clear-Host
+    Write-Host "═══════════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "  SELECT ENGINE" -ForegroundColor Cyan
+    Write-Host "═══════════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
+    
+    $engines = $AvailableEngines | Sort-Object { if ($_.Source -eq "Launcher") { 0 } else { 1 } }, Version -Descending
+    
+    for ($i = 0; $i -lt [Math]::Min(9, $engines.Count); $i++) {
+        $e = $engines[$i]
+        $current = if ($CurrentEngine.Value -and $e.Version -eq $CurrentEngine.Value.Version) { " (current)" } else { "" }
+        Write-Host "  [$($i + 1)] $($e.Version) ($($e.Source))$current" -ForegroundColor Cyan
+        Write-Host "      $($e.Path)" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+    Write-Host "  [ESC] Back" -ForegroundColor Gray
+    Write-Host ""
+    
+    $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    
+    if ($key.VirtualKeyCode -eq 27) { 
+        return 
+    }
+    
+    $keyChar = $key.Character.ToString()
+    if ($keyChar -match '^\d
+) {
+        $index = [int]$keyChar - 1
+        if ($index -ge 0 -and $index -lt $engines.Count) {
+            $engine = $engines[$index]
+            $CurrentEngine.Value = $engine
+            
+            # Save engine association to .uproject file
+            $success = Set-ProjectEngineAssociation -ProjectPath $CurrentProject -EngineAssociation $engine.Identifier
+            
+            Write-Host ""
+            if ($success) {
+                Write-Host "Switched to: $($engine.Version)" -ForegroundColor Green
+                Write-Host "Saved association to project file" -ForegroundColor Green
+            } else {
+                Write-Host "Switched to: $($engine.Version)" -ForegroundColor Green
+                Write-Host "Warning: Failed to save association to project file" -ForegroundColor Yellow
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Invoke-GenerateProjectFiles',
     'Invoke-BuildProject',
     'Invoke-CleanProject',
     'Invoke-UpdateSubmodules',
-    'Invoke-CombinedOperation'
+    'Invoke-CombinedOperation',
+    'Show-SwitchEngineMenu'
 )

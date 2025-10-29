@@ -49,4 +49,33 @@ function Test-ProjectRunning {
     return $false
 }
 
-Export-ModuleMember -Function Read-SingleKey, Test-ProjectRunning
+function Show-Confirmation {
+    param(
+        [string]$Message,
+        [switch]$Dangerous
+    )
+    
+    Write-Host ""
+    Write-Host "  $Message " -NoNewline -ForegroundColor Yellow
+    
+    if ($Dangerous) {
+        Write-Host "[Shift+Y]" -NoNewline -ForegroundColor Red
+        Write-Host " Confirm  " -NoNewline
+        Write-Host "[N]" -NoNewline -ForegroundColor Gray
+        Write-Host " Cancel"
+        
+        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        return ($key.Character.ToString().ToUpper() -eq "Y" -and ($key.ControlKeyState -band 0x0010))
+    } else {
+        Write-Host "[Y]" -NoNewline -ForegroundColor Green
+        Write-Host " Yes  " -NoNewline
+        Write-Host "[N]" -NoNewline -ForegroundColor Gray
+        Write-Host " Cancel" -ForegroundColor Gray
+        Write-Host ""
+        
+        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        return $key.Character.ToString().ToUpper() -eq "Y"
+    }
+}
+
+Export-ModuleMember -Function Read-SingleKey, Test-ProjectRunning, Show-Confirmation
