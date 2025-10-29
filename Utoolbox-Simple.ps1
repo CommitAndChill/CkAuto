@@ -242,18 +242,22 @@ function Show-MainMenu {
     $suffix3 = if (-not $hasSubmodules) { " (no .gitmodules)" } else { "" }
     Write-Host "  [3] 📦 Update Git Submodules$suffix3" -ForegroundColor $color3
     
-    # Option 4: Clean
+    # Option 4: Switch Engine
     $color4 = if ($isRunning) { "DarkGray" } else { "Cyan" }
-    Write-Host "  [4] 🧹 Clean Intermediate/Binaries" -ForegroundColor $color4
+    Write-Host "  [4] 🔄 Switch Engine" -ForegroundColor $color4
     
-    # Option 5: Combined
-    $color5 = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } else { "Cyan" }
-    $suffix5 = if (-not $hasSubmodules) { " (no .gitmodules)" } else { "" }
-    Write-Host "  [5] 🚀 Update Submodules → Generate → Build" -NoNewline -ForegroundColor $color5
+    # Option 5: Clean
+    $color5 = if ($isRunning) { "DarkGray" } else { "Cyan" }
+    Write-Host "  [5] 🧹 Clean Intermediate/Binaries" -ForegroundColor $color5
+    
+    # Option 6: Combined
+    $color6 = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } else { "Cyan" }
+    $suffix6 = if (-not $hasSubmodules) { " (no .gitmodules)" } else { "" }
+    Write-Host "  [6] 🚀 Update Submodules → Generate → Build" -NoNewline -ForegroundColor $color6
     if ($combinedTime) {
         Write-Host $combinedTime -NoNewline -ForegroundColor DarkGray
     }
-    Write-Host $suffix5 -ForegroundColor $color5
+    Write-Host $suffix6 -ForegroundColor $color6
     
     Write-Host ""
     Write-Host "  [Q] Quit │ [ESC] Exit" -ForegroundColor Gray
@@ -285,8 +289,10 @@ function Show-MainMenu {
                 Write-Host "`nCannot generate while editor is running!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
             } else {
-                Invoke-GenerateProjectFiles -Engine $script:CurrentEngine -ProjectPath $script:CurrentProject -Settings $script:ProjectSettings
-                Read-Host "`nPress Enter to continue"
+                if (Show-Confirmation "Generate project files?") {
+                    Invoke-GenerateProjectFiles -Engine $script:CurrentEngine -ProjectPath $script:CurrentProject -Settings $script:ProjectSettings
+                    Read-Host "`nPress Enter to continue"
+                }
                 Show-MainMenu -ForceClear
                 return
             }
@@ -296,10 +302,12 @@ function Show-MainMenu {
                 Write-Host "`nCannot build while editor is running!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
             } else {
-                & $saveSettings
-                Invoke-BuildProject -Target $targetName -Config $script:BuildConfig -Platform $script:BuildPlatform `
-                    -ProjectPath $script:CurrentProject -Engine $script:CurrentEngine -Settings $script:ProjectSettings
-                Read-Host "`nPress Enter to continue"
+                if (Show-Confirmation "Build project ($targetName $($script:BuildConfig) $($script:BuildPlatform))?") {
+                    & $saveSettings
+                    Invoke-BuildProject -Target $targetName -Config $script:BuildConfig -Platform $script:BuildPlatform `
+                        -ProjectPath $script:CurrentProject -Engine $script:CurrentEngine -Settings $script:ProjectSettings
+                    Read-Host "`nPress Enter to continue"
+                }
                 Show-MainMenu -ForceClear
                 return
             }
@@ -312,24 +320,41 @@ function Show-MainMenu {
                 Write-Host "`nNo .gitmodules file found!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
             } else {
-                Invoke-UpdateSubmodules -CurrentProject $script:CurrentProject
-                Read-Host "`nPress Enter to continue"
+                if (Show-Confirmation "Update git submodules?") {
+                    Invoke-UpdateSubmodules -CurrentProject $script:CurrentProject
+                    Read-Host "`nPress Enter to continue"
+                }
                 Show-MainMenu -ForceClear
                 return
             }
         }
         "4" {
             if ($isRunning) {
-                Write-Host "`nCannot clean while editor is running!" -ForegroundColor Red
+                Write-Host "`nCannot switch engine while editor is running!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
             } else {
-                Invoke-CleanProject -CurrentProject $script:CurrentProject
-                Read-Host "Press Enter to continue"
+                if (Show-Confirmation "Switch engine?") {
+                    Show-SwitchEngineMenu -CurrentEngine ([ref]$script:CurrentEngine) `
+                        -AvailableEngines $script:AvailableEngines -CurrentProject $script:CurrentProject
+                }
                 Show-MainMenu -ForceClear
                 return
             }
         }
         "5" {
+            if ($isRunning) {
+                Write-Host "`nCannot clean while editor is running!" -ForegroundColor Red
+                Start-Sleep -Seconds 2
+            } else {
+                if (Show-Confirmation "Clean intermediate and binaries?" -Dangerous) {
+                    Invoke-CleanProject -CurrentProject $script:CurrentProject
+                    Read-Host "Press Enter to continue"
+                }
+                Show-MainMenu -ForceClear
+                return
+            }
+        }
+        "6" {
             if ($isRunning) {
                 Write-Host "`nCannot run combined operation while editor is running!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
@@ -337,9 +362,11 @@ function Show-MainMenu {
                 Write-Host "`nNo .gitmodules file found!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
             } else {
-                & $saveSettings
-                Invoke-CombinedOperation -Target $targetName -Config $script:BuildConfig -Platform $script:BuildPlatform `
-                    -ProjectPath $script:CurrentProject -Engine $script:CurrentEngine -Settings $script:ProjectSettings
+                if (Show-Confirmation "Run combined operation (Update → Generate → Build)?") {
+                    & $saveSettings
+                    Invoke-CombinedOperation -Target $targetName -Config $script:BuildConfig -Platform $script:BuildPlatform `
+                        -ProjectPath $script:CurrentProject -Engine $script:CurrentEngine -Settings $script:ProjectSettings
+                }
                 Show-MainMenu -ForceClear
                 return
             }
