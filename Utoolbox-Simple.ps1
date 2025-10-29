@@ -10,8 +10,8 @@ Import-Module (Join-Path $scriptPath "UnrealToolboxSimple\Settings.psm1") -Force
 Import-Module (Join-Path $scriptPath "UnrealToolboxSimple\CommandHistory.psm1") -Force -Global
 Import-Module (Join-Path $scriptPath "UnrealToolboxSimple\ProjectManagement.psm1") -Force -Global
 
-# Import Common module from ConsoleApps
-$commonPath = "D:\ConsoleApps\Common\UnrealEngine.psm1"
+# Import Common module using relative path
+$commonPath = Join-Path $scriptPath "Common\UnrealEngine.psm1"
 if (Test-Path $commonPath) {
     Import-Module $commonPath -Force -Global
 } else {
