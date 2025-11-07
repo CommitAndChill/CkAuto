@@ -83,20 +83,27 @@ function Invoke-CleanProject {
 
     Write-Host ""
     Write-Host "Cleaning..." -ForegroundColor Yellow
+    Write-Host ""
 
     $dir = Split-Path $CurrentProject
     $cleaned = $false
 
-    if (Test-Path (Join-Path $dir "Intermediate")) {
-        Remove-Item (Join-Path $dir "Intermediate") -Recurse -Force
-        Write-Host "Removed Intermediate" -ForegroundColor Green
-        $cleaned = $true
-    }
+    $foldersToClean = @("Intermediate", "Binaries")
 
-    if (Test-Path (Join-Path $dir "Binaries")) {
-        Remove-Item (Join-Path $dir "Binaries") -Recurse -Force
-        Write-Host "Removed Binaries" -ForegroundColor Green
-        $cleaned = $true
+    foreach ($folder in $foldersToClean) {
+        $path = Join-Path $dir $folder
+        if (Test-Path $path) {
+            Write-Host "Removing $folder..." -NoNewline -ForegroundColor Yellow
+            try {
+                Remove-Item -Path $path -Recurse -Force -ErrorAction Stop
+                Write-Host " Done" -ForegroundColor Green
+                $cleaned = $true
+            }
+            catch {
+                Write-Host " Failed" -ForegroundColor Red
+                Write-Host "  Error: $_" -ForegroundColor Red
+            }
+        }
     }
 
     if (-not $cleaned) {
