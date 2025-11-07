@@ -83,8 +83,18 @@ function Show-Confirmation {
         Write-Host "[N]" -NoNewline -ForegroundColor Gray
         Write-Host " Cancel"
         
-        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-        return ($key.Character.ToString().ToUpper() -eq "Y" -and ($key.ControlKeyState -band 0x0010))
+        # Loop until we get a valid key (not just modifier)
+        while ($true) {
+            $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            
+            # Ignore modifier-only presses
+            $charCode = [int][char]$key.Character
+            if ($charCode -eq 0 -or $charCode -lt 32) {
+                continue
+            }
+            
+            return ($key.Character.ToString().ToUpper() -eq "Y" -and ($key.ControlKeyState -band 0x0010))
+        }
     } else {
         Write-Host "[Y]" -NoNewline -ForegroundColor Green
         Write-Host " Yes  " -NoNewline
@@ -92,8 +102,18 @@ function Show-Confirmation {
         Write-Host " Cancel" -ForegroundColor Gray
         Write-Host ""
         
-        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-        return $key.Character.ToString().ToUpper() -eq "Y"
+        # Loop until we get a valid key (not just modifier)
+        while ($true) {
+            $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            
+            # Ignore modifier-only presses
+            $charCode = [int][char]$key.Character
+            if ($charCode -eq 0 -or $charCode -lt 32) {
+                continue
+            }
+            
+            return $key.Character.ToString().ToUpper() -eq "Y"
+        }
     }
 }
 
