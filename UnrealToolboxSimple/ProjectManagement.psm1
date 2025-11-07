@@ -131,13 +131,31 @@ function Invoke-UpdateSubmodules {
     Write-Host ""
     Write-Host "Updating submodules..." -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "Command: " -NoNewline -ForegroundColor Gray
-    Write-Host "git submodule update --init --recursive" -ForegroundColor Cyan
-    Write-Host ""
 
     Push-Location $projectDir
     try {
-        # Call git directly so output shows in console
+        # Step 1: Sync remote URLs from .gitmodules to .git/config
+        Write-Host "Step 1: Syncing submodule remotes..." -ForegroundColor Cyan
+        Write-Host "Command: " -NoNewline -ForegroundColor Gray
+        Write-Host "git submodule sync --recursive" -ForegroundColor Cyan
+        Write-Host ""
+        
+        & git submodule sync --recursive
+        $exitCode = $LASTEXITCODE
+
+        if ($exitCode -ne 0) {
+            Write-Host ""
+            Write-Host "Failed to sync submodules (exit code: $exitCode)" -ForegroundColor Red
+            return $false
+        }
+
+        Write-Host ""
+        Write-Host "Step 2: Updating submodules..." -ForegroundColor Cyan
+        Write-Host "Command: " -NoNewline -ForegroundColor Gray
+        Write-Host "git submodule update --init --recursive" -ForegroundColor Cyan
+        Write-Host ""
+
+        # Step 2: Update submodules with synced URLs
         & git submodule update --init --recursive
         $exitCode = $LASTEXITCODE
 
