@@ -250,14 +250,47 @@ function Show-MainMenu {
     $color5 = if ($isRunning) { "DarkGray" } else { "Cyan" }
     Write-Host "  [5] 🧹 Clean Intermediate/Binaries" -ForegroundColor $color5
     
-    # Option 6: Combined
+    # Option 6: Combined with step toggles
     $color6 = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } else { "Cyan" }
     $suffix6 = if (-not $hasSubmodules) { " (no .gitmodules)" } else { "" }
-    Write-Host "  [6] 🚀 Update Submodules → Generate → Build → Launch" -NoNewline -ForegroundColor $color6
+    
+    # Initialize combined settings if they don't exist
+    if (-not $script:ProjectSettings.combined) {
+        $script:ProjectSettings.combined = @{
+            updateSubmodules = $true
+            generate = $true
+            build = $true
+            launch = $true
+        }
+        Save-ProjectSettings -ProjectPath $script:CurrentProject -Settings $script:ProjectSettings
+    }
+    
+    Write-Host "  [6] 🚀 Combined Operation" -NoNewline -ForegroundColor $color6
     if ($combinedTime) {
         Write-Host $combinedTime -NoNewline -ForegroundColor DarkGray
     }
     Write-Host $suffix6 -ForegroundColor $color6
+    
+    # Combined operation step toggles
+    $toggleColor6Base = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } else { "Yellow" }
+    $updateIcon = if ($script:ProjectSettings.combined.updateSubmodules) { "✓" } else { "✗" }
+    $generateIcon = if ($script:ProjectSettings.combined.generate) { "✓" } else { "✗" }
+    $buildIcon = if ($script:ProjectSettings.combined.build) { "✓" } else { "✗" }
+    $launchIcon = if ($script:ProjectSettings.combined.launch) { "✓" } else { "✗" }
+    
+    $updateColor = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } elseif ($script:ProjectSettings.combined.updateSubmodules) { "Yellow" } else { "DarkGray" }
+    $generateColor = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } elseif ($script:ProjectSettings.combined.generate) { "Yellow" } else { "DarkGray" }
+    $buildColor = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } elseif ($script:ProjectSettings.combined.build) { "Yellow" } else { "DarkGray" }
+    $launchColor = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } elseif ($script:ProjectSettings.combined.launch) { "Yellow" } else { "DarkGray" }
+    
+    Write-Host "      Steps: " -NoNewline -ForegroundColor Gray
+    Write-Host "[U] $updateIcon Update" -NoNewline -ForegroundColor $updateColor
+    Write-Host " │ " -NoNewline -ForegroundColor DarkGray
+    Write-Host "[N] $generateIcon Generate" -NoNewline -ForegroundColor $generateColor
+    Write-Host " │ " -NoNewline -ForegroundColor DarkGray
+    Write-Host "[M] $buildIcon Build" -NoNewline -ForegroundColor $buildColor
+    Write-Host " │ " -NoNewline -ForegroundColor DarkGray
+    Write-Host "[R] $launchIcon Launch" -ForegroundColor $launchColor
     
     Write-Host ""
     Write-Host "  [Q] Quit │ [ESC] Exit" -ForegroundColor Gray
@@ -360,13 +393,26 @@ function Show-MainMenu {
                 Write-Host "`nNo .gitmodules file found!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
             } else {
-                if (Show-Confirmation "Run combined operation (Update → Generate → Build → Launch)?") {
-                    & $saveSettings
-                    Invoke-CombinedOperation -Target $targetName -Config $script:BuildConfig -Platform $script:BuildPlatform `
-                        -ProjectPath $script:CurrentProject -Engine $script:CurrentEngine -Settings $script:ProjectSettings
+                # Build confirmation message with enabled steps
+                $steps = @()
+                if ($script:ProjectSettings.combined.updateSubmodules) { $steps += "Update Submodules" }
+                if ($script:ProjectSettings.combined.generate) { $steps += "Generate" }
+                if ($script:ProjectSettings.combined.build) { $steps += "Build" }
+                if ($script:ProjectSettings.combined.launch) { $steps += "Launch" }
+                
+                if ($steps.Count -eq 0) {
+                    Write-Host "`nNo steps enabled! Enable at least one step using U/N/M/R keys." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 2
+                } else {
+                    $stepsText = $steps -join " → "
+                    if (Show-Confirmation "Run combined operation ($stepsText)?") {
+                        & $saveSettings
+                        Invoke-CombinedOperation -Target $targetName -Config $script:BuildConfig -Platform $script:BuildPlatform `
+                            -ProjectPath $script:CurrentProject -Engine $script:CurrentEngine -Settings $script:ProjectSettings
+                    }
+                    Show-MainMenu -ForceClear
+                    return
                 }
-                Show-MainMenu -ForceClear
-                return
             }
         }
         "T" {
@@ -390,6 +436,30 @@ function Show-MainMenu {
                 $platforms = @("Win64", "Linux", "Android")
                 $currentIndex = $platforms.IndexOf($script:BuildPlatform)
                 $script:BuildPlatform = $platforms[($currentIndex + 1) % $platforms.Count]
+                & $saveSettings
+            }
+        }
+        "U" {
+            if (-not $isRunning -and $hasSubmodules) {
+                $script:ProjectSettings.combined.updateSubmodules = -not $script:ProjectSettings.combined.updateSubmodules
+                & $saveSettings
+            }
+        }
+        "N" {
+            if (-not $isRunning -and $hasSubmodules) {
+                $script:ProjectSettings.combined.generate = -not $script:ProjectSettings.combined.generate
+                & $saveSettings
+            }
+        }
+        "M" {
+            if (-not $isRunning -and $hasSubmodules) {
+                $script:ProjectSettings.combined.build = -not $script:ProjectSettings.combined.build
+                & $saveSettings
+            }
+        }
+        "R" {
+            if (-not $isRunning -and $hasSubmodules) {
+                $script:ProjectSettings.combined.launch = -not $script:ProjectSettings.combined.launch
                 & $saveSettings
             }
         }
