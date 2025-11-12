@@ -29,6 +29,12 @@ function Load-ProjectSettings {
                     config = $json.build.config
                     platform = $json.build.platform
                 }
+                combined = @{
+                    updateSubmodules = if ($null -ne $json.combined.updateSubmodules) { $json.combined.updateSubmodules } else { $true }
+                    generate = if ($null -ne $json.combined.generate) { $json.combined.generate } else { $true }
+                    build = if ($null -ne $json.combined.build) { $json.combined.build } else { $true }
+                    launch = if ($null -ne $json.combined.launch) { $json.combined.launch } else { $true }
+                }
                 history = @{
                     generate = @($json.history.generate)
                     build = @($json.history.build)
@@ -47,6 +53,12 @@ function Load-ProjectSettings {
             target = "Editor"
             config = "Development"
             platform = "Win64"
+        }
+        combined = @{
+            updateSubmodules = $true
+            generate = $true
+            build = $true
+            launch = $true
         }
         history = @{
             generate = @()

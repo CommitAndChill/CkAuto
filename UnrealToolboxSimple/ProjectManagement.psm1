@@ -384,6 +384,153 @@ function Invoke-LaunchEditor {
     }
 }
 
+function Invoke-CombinedOperation {
+    param([string]$Target, [string]$Config, [string]$Platform, [string]$ProjectPath, [object]$Engine, [hashtable]$Settings)
+
+    Write-Host ""
+    Write-Host "═══════════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "🚀 COMBINED OPERATION" -ForegroundColor Cyan
+    Write-Host "═══════════════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
+
+    $totalStartTime = Get-Date
+    $submodulesTime = 0
+    $generateTime = 0
+    $buildTime = 0
+    $launchTime = 0
+    $stepNum = 1
+    $totalSteps = 4
+
+    # Step 1: Update Submodules
+    if ($Settings.combined.updateSubmodules) {
+        Write-Host "[$stepNum/$totalSteps] Updating Git Submodules..." -ForegroundColor Yellow
+        $stepStart = Get-Date
+        $success = Invoke-UpdateSubmodules -CurrentProject $ProjectPath
+        $submodulesTime = ((Get-Date) - $stepStart).TotalSeconds
+        
+        Write-Host "      Step completed in " -NoNewline -ForegroundColor DarkGray
+        Write-Host (Format-ExecutionTime $submodulesTime) -ForegroundColor Cyan
+        Write-Host ""
+        
+        if (-not $success) {
+            Write-Host "❌ Combined operation failed at step $stepNum (Update Submodules)" -ForegroundColor Red
+            Read-Host "Press Enter to continue"
+            return
+        }
+    } else {
+        Write-Host "[$stepNum/$totalSteps] Updating Git Submodules... " -NoNewline -ForegroundColor DarkGray
+        Write-Host "SKIPPED" -ForegroundColor Yellow
+        Write-Host ""
+    }
+    $stepNum++
+
+    # Step 2: Generate Project Files
+    if ($Settings.combined.generate) {
+        Write-Host "[$stepNum/$totalSteps] Generating Project Files..." -ForegroundColor Yellow
+        $stepStart = Get-Date
+        $success = Invoke-GenerateProjectFiles -Engine $Engine -ProjectPath $ProjectPath -Settings $Settings
+        $generateTime = ((Get-Date) - $stepStart).TotalSeconds
+        
+        Write-Host "      Step completed in " -NoNewline -ForegroundColor DarkGray
+        Write-Host (Format-ExecutionTime $generateTime) -ForegroundColor Cyan
+        Write-Host ""
+        
+        if (-not $success) {
+            Write-Host "❌ Combined operation failed at step $stepNum (Generate)" -ForegroundColor Red
+            Read-Host "Press Enter to continue"
+            return
+        }
+    } else {
+        Write-Host "[$stepNum/$totalSteps] Generating Project Files... " -NoNewline -ForegroundColor DarkGray
+        Write-Host "SKIPPED" -ForegroundColor Yellow
+        Write-Host ""
+    }
+    $stepNum++
+
+    # Step 3: Build Project
+    if ($Settings.combined.build) {
+        Write-Host "[$stepNum/$totalSteps] Building Project..." -ForegroundColor Yellow
+        $stepStart = Get-Date
+        $success = Invoke-BuildProject -Target $Target -Config $Config -Platform $Platform `
+            -ProjectPath $ProjectPath -Engine $Engine -Settings $Settings
+        $buildTime = ((Get-Date) - $stepStart).TotalSeconds
+        
+        Write-Host "      Step completed in " -NoNewline -ForegroundColor DarkGray
+        Write-Host (Format-ExecutionTime $buildTime) -ForegroundColor Cyan
+        Write-Host ""
+        
+        if (-not $success) {
+            Write-Host "❌ Combined operation failed at step $stepNum (Build)" -ForegroundColor Red
+            Read-Host "Press Enter to continue"
+            return
+        }
+    } else {
+        Write-Host "[$stepNum/$totalSteps] Building Project... " -NoNewline -ForegroundColor DarkGray
+        Write-Host "SKIPPED" -ForegroundColor Yellow
+        Write-Host ""
+    }
+    $stepNum++
+
+    # Step 4: Launch Editor
+    if ($Settings.combined.launch) {
+        Write-Host "[$stepNum/$totalSteps] Launching Unreal Editor..." -ForegroundColor Yellow
+        $stepStart = Get-Date
+        $success = Invoke-LaunchEditor -EnginePath $Engine.Path -ProjectPath $ProjectPath
+        $launchTime = ((Get-Date) - $stepStart).TotalSeconds
+        
+        Write-Host "      Step completed in " -NoNewline -ForegroundColor DarkGray
+        Write-Host (Format-ExecutionTime $launchTime) -ForegroundColor Cyan
+        Write-Host ""
+        
+        if (-not $success) {
+            Write-Host "❌ Combined operation failed at step $stepNum (Launch Editor)" -ForegroundColor Red
+            Read-Host "Press Enter to continue"
+            return
+        }
+    } else {
+        Write-Host "[$stepNum/$totalSteps] Launching Unreal Editor... " -NoNewline -ForegroundColor DarkGray
+        Write-Host "SKIPPED" -ForegroundColor Yellow
+        Write-Host ""
+    }
+
+    # Success summary
+    $totalTime = ((Get-Date) - $totalStartTime).TotalSeconds
+    
+    Write-Host "═══════════════════════════════════════════════════════════════════════════" -ForegroundColor Green
+    Write-Host "✅ ALL STEPS COMPLETED SUCCESSFULLY!" -ForegroundColor Green
+    Write-Host "═══════════════════════════════════════════════════════════════════════════" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Time Breakdown:" -ForegroundColor Yellow
+    if ($Settings.combined.updateSubmodules) {
+        Write-Host "  Update Submodules: " -NoNewline -ForegroundColor Gray
+        Write-Host (Format-ExecutionTime $submodulesTime) -ForegroundColor Cyan
+    }
+    if ($Settings.combined.generate) {
+        Write-Host "  Generate:          " -NoNewline -ForegroundColor Gray
+        Write-Host (Format-ExecutionTime $generateTime) -ForegroundColor Cyan
+    }
+    if ($Settings.combined.build) {
+        Write-Host "  Build:             " -NoNewline -ForegroundColor Gray
+        Write-Host (Format-ExecutionTime $buildTime) -ForegroundColor Cyan
+    }
+    if ($Settings.combined.launch) {
+        Write-Host "  Launch Editor:     " -NoNewline -ForegroundColor Gray
+        Write-Host (Format-ExecutionTime $launchTime) -ForegroundColor Cyan
+    }
+    Write-Host "  " -NoNewline
+    Write-Host "─────────────────────" -ForegroundColor DarkGray
+    Write-Host "  Total:             " -NoNewline -ForegroundColor Yellow
+    Write-Host (Format-ExecutionTime $totalTime) -ForegroundColor Cyan
+    Write-Host ""
+
+    # Save to history
+    Add-CombinedCommandToHistory -Target $Target -Config $Config -Platform $Platform `
+        -ProjectPath $ProjectPath -Engine $Engine -Settings $Settings `
+        -SubmodulesTime $submodulesTime -GenerateTime $generateTime -BuildTime $buildTime -TotalTime $totalTime
+
+    Read-Host "Press Enter to continue"
+}
+
 function Show-SwitchEngineMenu {
     param(
         [Parameter(Mandatory)]
@@ -451,7 +598,7 @@ Export-ModuleMember -Function @(
     'Invoke-BuildProject',
     'Invoke-CleanProject',
     'Invoke-UpdateSubmodules',
-    'Invoke-CombinedOperation',
     'Invoke-LaunchEditor',
+    'Invoke-CombinedOperation',
     'Show-SwitchEngineMenu'
 )
