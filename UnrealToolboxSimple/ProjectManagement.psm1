@@ -545,6 +545,47 @@ function Invoke-CombinedOperation {
     Read-Host "Press Enter to continue"
 }
 
+function Stop-ProjectEditor {
+    param([string]$ProjectPath)
+    
+    if (-not $ProjectPath) {
+        Write-Host "No project!" -ForegroundColor Red
+        return $false
+    }
+    
+    $projectName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectPath)
+    $editorProcessName = "UnrealEditor"
+    
+    Write-Host ""
+    Write-Host "Terminating Unreal Editor..." -ForegroundColor Yellow
+    
+    $processes = Get-Process -Name $editorProcessName -ErrorAction SilentlyContinue
+    $terminated = $false
+    
+    foreach ($proc in $processes) {
+        try {
+            $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)").CommandLine
+            if ($cmdLine -and $cmdLine -like "*$projectName*") {
+                Write-Host "Stopping process $($proc.Id)..." -ForegroundColor Cyan
+                $proc.Kill()
+                $proc.WaitForExit(5000)  # Wait up to 5 seconds
+                $terminated = $true
+                Write-Host "Editor terminated successfully!" -ForegroundColor Green
+            }
+        }
+        catch {
+            Write-Host "Failed to terminate process: $_" -ForegroundColor Red
+        }
+    }
+    
+    if (-not $terminated) {
+        Write-Host "No running editor process found for this project" -ForegroundColor Yellow
+    }
+    
+    Write-Host ""
+    return $terminated
+}
+
 function Show-SwitchEngineMenu {
     param(
         [Parameter(Mandatory)]
@@ -614,5 +655,6 @@ Export-ModuleMember -Function @(
     'Invoke-UpdateSubmodules',
     'Invoke-LaunchEditor',
     'Invoke-CombinedOperation',
+    'Stop-ProjectEditor',
     'Show-SwitchEngineMenu'
 )
