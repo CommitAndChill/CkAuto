@@ -79,6 +79,16 @@ function Initialize-Toolbox {
                 Sort-Object Version -Descending |
                 Select-Object -First 1
         }
+        
+        # If still no engine, prompt user to select one
+        if (-not $script:CurrentEngine -and $script:AvailableEngines.Count -gt 0) {
+            Write-Host ""
+            Write-Host "No engine associated with project. Please select an engine." -ForegroundColor Yellow
+            Write-Host ""
+            Read-Host "Press Enter to continue"
+            Show-SwitchEngineMenu -CurrentEngine ([ref]$script:CurrentEngine) `
+                -AvailableEngines $script:AvailableEngines -CurrentProject $script:CurrentProject
+        }
     } elseif ($projects.Count -eq 0) {
         Write-Host "No .uproject file found in parent directory: $parentDir" -ForegroundColor Red
         Read-Host "Press Enter to exit"
@@ -124,6 +134,7 @@ function Show-MainMenu {
 
     # Check if editor is running
     $isRunning = Test-ProjectRunning -ProjectPath $script:CurrentProject
+    $hasEngine = $null -ne $script:CurrentEngine
 
     if ($script:CurrentProject) {
         Write-Host "📁 Project" -NoNewline -ForegroundColor Yellow
@@ -185,23 +196,30 @@ function Show-MainMenu {
     
     Write-Host "► Quick Actions" -ForegroundColor Green
     
-    # Option 1: Generate
-    $color1 = if ($isRunning) { "DarkGray" } else { "Cyan" }
-    Write-Host "  [1] ⚙️  Generate Project Files" -NoNewline -ForegroundColor $color1
-    if ($generateTime) {
-        Write-Host $generateTime -ForegroundColor DarkGray
-    } else {
+    # Show warning if no engine selected
+    if (-not $hasEngine) {
+        Write-Host ""
+        Write-Host "  ⚠️  No engine selected! Press [4] to select an engine." -ForegroundColor Yellow
         Write-Host ""
     }
     
+    # Option 1: Generate
+    $color1 = if ($isRunning -or -not $hasEngine) { "DarkGray" } else { "Cyan" }
+    $suffix1 = if (-not $hasEngine) { " (no engine)" } else { "" }
+    Write-Host "  [1] ⚙️  Generate Project Files" -NoNewline -ForegroundColor $color1
+    if ($generateTime) {
+        Write-Host $generateTime -NoNewline -ForegroundColor DarkGray
+    }
+    Write-Host $suffix1 -ForegroundColor $color1
+    
     # Option 2: Build with configuration
-    $color2 = if ($isRunning) { "DarkGray" } else { "Cyan" }
+    $color2 = if ($isRunning -or -not $hasEngine) { "DarkGray" } else { "Cyan" }
+    $suffix2 = if (-not $hasEngine) { " (no engine)" } else { "" }
     Write-Host "  [2] 🔨 Build Project" -NoNewline -ForegroundColor $color2
     if ($buildTime) {
-        Write-Host $buildTime -ForegroundColor DarkGray
-    } else {
-        Write-Host ""
+        Write-Host $buildTime -NoNewline -ForegroundColor DarkGray
     }
+    Write-Host $suffix2 -ForegroundColor $color2
     
     # Build configuration toggles
     $projectName = [System.IO.Path]::GetFileNameWithoutExtension($script:CurrentProject)
@@ -234,7 +252,7 @@ function Show-MainMenu {
         default { "🪟" }
     }
     
-    $toggleColor = if ($isRunning) { "DarkGray" } else { "Yellow" }
+    $toggleColor = if ($isRunning -or -not $hasEngine) { "DarkGray" } else { "Yellow" }
     Write-Host "      Target: " -NoNewline -ForegroundColor Gray
     Write-Host "[T] $targetEmoji $($script:BuildTarget)" -NoNewline -ForegroundColor $toggleColor
     Write-Host " │ " -NoNewline -ForegroundColor DarkGray
@@ -264,8 +282,8 @@ function Show-MainMenu {
     }
     
     # Option 6: Combined with step toggles
-    $color6 = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } else { "Cyan" }
-    $suffix6 = if (-not $hasSubmodules) { " (no .gitmodules)" } else { "" }
+    $color6 = if ($isRunning -or -not $hasSubmodules -or -not $hasEngine) { "DarkGray" } else { "Cyan" }
+    $suffix6 = if (-not $hasSubmodules) { " (no .gitmodules)" } elseif (-not $hasEngine) { " (no engine)" } else { "" }
     
     # Initialize combined settings if they don't exist
     if (-not $script:ProjectSettings.combined) {
@@ -285,16 +303,16 @@ function Show-MainMenu {
     Write-Host $suffix6 -ForegroundColor $color6
     
     # Combined operation step toggles
-    $toggleColor6Base = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } else { "Yellow" }
+    $toggleColor6Base = if ($isRunning -or -not $hasSubmodules -or -not $hasEngine) { "DarkGray" } else { "Yellow" }
     $updateIcon = if ($script:ProjectSettings.combined.updateSubmodules) { "✓" } else { "✗" }
     $generateIcon = if ($script:ProjectSettings.combined.generate) { "✓" } else { "✗" }
     $buildIcon = if ($script:ProjectSettings.combined.build) { "✓" } else { "✗" }
     $launchIcon = if ($script:ProjectSettings.combined.launch) { "✓" } else { "✗" }
     
-    $updateColor = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } elseif ($script:ProjectSettings.combined.updateSubmodules) { "Yellow" } else { "DarkGray" }
-    $generateColor = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } elseif ($script:ProjectSettings.combined.generate) { "Yellow" } else { "DarkGray" }
-    $buildColor = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } elseif ($script:ProjectSettings.combined.build) { "Yellow" } else { "DarkGray" }
-    $launchColor = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } elseif ($script:ProjectSettings.combined.launch) { "Yellow" } else { "DarkGray" }
+    $updateColor = if ($isRunning -or -not $hasSubmodules -or -not $hasEngine) { "DarkGray" } elseif ($script:ProjectSettings.combined.updateSubmodules) { "Yellow" } else { "DarkGray" }
+    $generateColor = if ($isRunning -or -not $hasSubmodules -or -not $hasEngine) { "DarkGray" } elseif ($script:ProjectSettings.combined.generate) { "Yellow" } else { "DarkGray" }
+    $buildColor = if ($isRunning -or -not $hasSubmodules -or -not $hasEngine) { "DarkGray" } elseif ($script:ProjectSettings.combined.build) { "Yellow" } else { "DarkGray" }
+    $launchColor = if ($isRunning -or -not $hasSubmodules -or -not $hasEngine) { "DarkGray" } elseif ($script:ProjectSettings.combined.launch) { "Yellow" } else { "DarkGray" }
     
     Write-Host "      Steps: " -NoNewline -ForegroundColor Gray
     Write-Host "[U] $updateIcon Update" -NoNewline -ForegroundColor $updateColor
@@ -309,7 +327,7 @@ function Show-MainMenu {
     # Launch log toggle
     $showLog = if ($script:ProjectSettings.launch.showLog -ne $null) { $script:ProjectSettings.launch.showLog } else { $true }
     $logIcon = if ($showLog) { "✓" } else { "✗" }
-    $logColor = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } elseif ($showLog) { "Yellow" } else { "DarkGray" }
+    $logColor = if ($isRunning -or -not $hasSubmodules -or -not $hasEngine) { "DarkGray" } elseif ($showLog) { "Yellow" } else { "DarkGray" }
     Write-Host "[L] $logIcon Log" -ForegroundColor $logColor
     
     Write-Host ""
@@ -341,6 +359,9 @@ function Show-MainMenu {
             if ($isRunning) {
                 Write-Host "`nCannot generate while editor is running!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
+            } elseif (-not $hasEngine) {
+                Write-Host "`nNo engine selected! Press [4] to select an engine." -ForegroundColor Red
+                Start-Sleep -Seconds 2
             } else {
                 if (Show-Confirmation "Generate project files?") {
                     Invoke-GenerateProjectFiles -Engine $script:CurrentEngine -ProjectPath $script:CurrentProject -Settings $script:ProjectSettings
@@ -353,6 +374,9 @@ function Show-MainMenu {
         "2" {
             if ($isRunning) {
                 Write-Host "`nCannot build while editor is running!" -ForegroundColor Red
+                Start-Sleep -Seconds 2
+            } elseif (-not $hasEngine) {
+                Write-Host "`nNo engine selected! Press [4] to select an engine." -ForegroundColor Red
                 Start-Sleep -Seconds 2
             } else {
                 if (Show-Confirmation "Build project ($targetName $($script:BuildConfig) $($script:BuildPlatform))?") {
@@ -429,6 +453,9 @@ function Show-MainMenu {
             } elseif (-not $hasSubmodules) {
                 Write-Host "`nNo .gitmodules file found!" -ForegroundColor Red
                 Start-Sleep -Seconds 2
+            } elseif (-not $hasEngine) {
+                Write-Host "`nNo engine selected! Press [4] to select an engine." -ForegroundColor Red
+                Start-Sleep -Seconds 2
             } else {
                 # Build confirmation message with enabled steps
                 $steps = @()
@@ -453,7 +480,7 @@ function Show-MainMenu {
             }
         }
         "T" {
-            if (-not $isRunning) {
+            if (-not $isRunning -and $hasEngine) {
                 $targets = @("Editor", "Game", "Server", "Client")
                 $currentIndex = $targets.IndexOf($script:BuildTarget)
                 $script:BuildTarget = $targets[($currentIndex + 1) % $targets.Count]
@@ -461,7 +488,7 @@ function Show-MainMenu {
             }
         }
         "C" {
-            if (-not $isRunning) {
+            if (-not $isRunning -and $hasEngine) {
                 $configs = @("Development", "DebugGame", "Shipping", "Test")
                 $currentIndex = $configs.IndexOf($script:BuildConfig)
                 $script:BuildConfig = $configs[($currentIndex + 1) % $configs.Count]
@@ -469,7 +496,7 @@ function Show-MainMenu {
             }
         }
         "P" {
-            if (-not $isRunning) {
+            if (-not $isRunning -and $hasEngine) {
                 $platforms = @("Win64", "Linux", "Android")
                 $currentIndex = $platforms.IndexOf($script:BuildPlatform)
                 $script:BuildPlatform = $platforms[($currentIndex + 1) % $platforms.Count]
@@ -477,31 +504,31 @@ function Show-MainMenu {
             }
         }
         "U" {
-            if (-not $isRunning -and $hasSubmodules) {
+            if (-not $isRunning -and $hasSubmodules -and $hasEngine) {
                 $script:ProjectSettings.combined.updateSubmodules = -not $script:ProjectSettings.combined.updateSubmodules
                 & $saveSettings
             }
         }
         "N" {
-            if (-not $isRunning -and $hasSubmodules) {
+            if (-not $isRunning -and $hasSubmodules -and $hasEngine) {
                 $script:ProjectSettings.combined.generate = -not $script:ProjectSettings.combined.generate
                 & $saveSettings
             }
         }
         "M" {
-            if (-not $isRunning -and $hasSubmodules) {
+            if (-not $isRunning -and $hasSubmodules -and $hasEngine) {
                 $script:ProjectSettings.combined.build = -not $script:ProjectSettings.combined.build
                 & $saveSettings
             }
         }
         "R" {
-            if (-not $isRunning -and $hasSubmodules) {
+            if (-not $isRunning -and $hasSubmodules -and $hasEngine) {
                 $script:ProjectSettings.combined.launch = -not $script:ProjectSettings.combined.launch
                 & $saveSettings
             }
         }
         "L" {
-            if (-not $isRunning -and $hasSubmodules) {
+            if (-not $isRunning -and $hasSubmodules -and $hasEngine) {
                 $script:ProjectSettings.launch.showLog = -not $script:ProjectSettings.launch.showLog
                 & $saveSettings
             }
