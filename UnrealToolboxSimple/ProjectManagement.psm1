@@ -253,7 +253,8 @@ function Invoke-CombinedOperation {
     # Step 4: Launch Editor
     Write-Host "[4/4] Launching Unreal Editor..." -ForegroundColor Yellow
     $stepStart = Get-Date
-    $success = Invoke-LaunchEditor -EnginePath $Engine.Path -ProjectPath $ProjectPath
+    $showLog = if ($Settings.launch.showLog -ne $null) { $Settings.launch.showLog } else { $true }
+    $success = Invoke-LaunchEditor -EnginePath $Engine.Path -ProjectPath $ProjectPath -Config $Config -ShowLog $showLog
     $launchTime = ((Get-Date) - $stepStart).TotalSeconds
     
     Write-Host "      Step completed in " -NoNewline -ForegroundColor DarkGray
@@ -342,7 +343,9 @@ function Invoke-UnrealBuildTool {
 function Invoke-LaunchEditor {
     param(
         [string]$EnginePath,
-        [string]$ProjectPath
+        [string]$ProjectPath,
+        [string]$Config = "Development",
+        [bool]$ShowLog = $true
     )
     
     Write-Host ""
@@ -360,20 +363,30 @@ function Invoke-LaunchEditor {
         return $false
     }
     
+    # Build command arguments
+    $args = '"' + $ProjectPath + '"'
+    
+    # Add config flag if not Development
+    if ($Config -and $Config -ne "Development") {
+        $args += " -$Config"
+    }
+    
+    # Always add skipcompile
+    $args += " -skipcompile"
+    
+    # Add log flag if enabled
+    if ($ShowLog) {
+        $args += " -log"
+    }
+    
     Write-Host ""
     Write-Host "Command: " -NoNewline -ForegroundColor Gray
-    Write-Host ('"' + $editorPath + '" "' + $ProjectPath + '"') -ForegroundColor Cyan
+    Write-Host ('"' + $editorPath + '" ' + $args) -ForegroundColor Cyan
     Write-Host ""
     
     try {
-        # Launch editor as a new process (don't wait for it to exit)
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = $editorPath
-        $psi.Arguments = '"' + $ProjectPath + '"'
-        $psi.UseShellExecute = $true
-        $psi.CreateNoWindow = $false
-        
-        [void][System.Diagnostics.Process]::Start($psi)
+        # Use Start-Process to avoid phantom processes
+        Start-Process -FilePath $editorPath -ArgumentList $args -PassThru | Out-Null
         
         Write-Host "Editor launched successfully!" -ForegroundColor Green
         return $true
@@ -475,7 +488,8 @@ function Invoke-CombinedOperation {
     if ($Settings.combined.launch) {
         Write-Host "[$stepNum/$totalSteps] Launching Unreal Editor..." -ForegroundColor Yellow
         $stepStart = Get-Date
-        $success = Invoke-LaunchEditor -EnginePath $Engine.Path -ProjectPath $ProjectPath
+        $showLog = if ($Settings.launch.showLog -ne $null) { $Settings.launch.showLog } else { $true }
+        $success = Invoke-LaunchEditor -EnginePath $Engine.Path -ProjectPath $ProjectPath -Config $Config -ShowLog $showLog
         $launchTime = ((Get-Date) - $stepStart).TotalSeconds
         
         Write-Host "      Step completed in " -NoNewline -ForegroundColor DarkGray

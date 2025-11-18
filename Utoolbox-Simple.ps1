@@ -56,6 +56,14 @@ function Initialize-Toolbox {
             $script:BuildTarget = $script:ProjectSettings.build.target
             $script:BuildConfig = $script:ProjectSettings.build.config
             $script:BuildPlatform = $script:ProjectSettings.build.platform
+            
+            # Initialize launch settings if they don't exist
+            if (-not $script:ProjectSettings.launch) {
+                $script:ProjectSettings.launch = @{
+                    showLog = $true
+                }
+                Save-ProjectSettings -ProjectPath $script:CurrentProject -Settings $script:ProjectSettings
+            }
         }
 
         $engineAssoc = Get-ProjectEngineAssociation $script:CurrentProject
@@ -290,7 +298,14 @@ function Show-MainMenu {
     Write-Host " │ " -NoNewline -ForegroundColor DarkGray
     Write-Host "[M] $buildIcon Build" -NoNewline -ForegroundColor $buildColor
     Write-Host " │ " -NoNewline -ForegroundColor DarkGray
-    Write-Host "[R] $launchIcon Launch" -ForegroundColor $launchColor
+    Write-Host "[R] $launchIcon Launch" -NoNewline -ForegroundColor $launchColor
+    Write-Host " │ " -NoNewline -ForegroundColor DarkGray
+    
+    # Launch log toggle
+    $showLog = if ($script:ProjectSettings.launch.showLog -ne $null) { $script:ProjectSettings.launch.showLog } else { $true }
+    $logIcon = if ($showLog) { "✓" } else { "✗" }
+    $logColor = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } elseif ($showLog) { "Yellow" } else { "DarkGray" }
+    Write-Host "[L] $logIcon Log" -ForegroundColor $logColor
     
     Write-Host ""
     Write-Host "  [Q] Quit │ [ESC] Exit" -ForegroundColor Gray
@@ -460,6 +475,12 @@ function Show-MainMenu {
         "R" {
             if (-not $isRunning -and $hasSubmodules) {
                 $script:ProjectSettings.combined.launch = -not $script:ProjectSettings.combined.launch
+                & $saveSettings
+            }
+        }
+        "L" {
+            if (-not $isRunning -and $hasSubmodules) {
+                $script:ProjectSettings.launch.showLog = -not $script:ProjectSettings.launch.showLog
                 & $saveSettings
             }
         }
