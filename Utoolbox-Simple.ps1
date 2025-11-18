@@ -258,6 +258,11 @@ function Show-MainMenu {
     $color5 = if ($isRunning) { "DarkGray" } else { "Cyan" }
     Write-Host "  [5] 🧹 Clean Intermediate/Binaries" -ForegroundColor $color5
     
+    # Option 7: Stop Editor (only when running)
+    if ($isRunning) {
+        Write-Host "  [7] 🛑 Stop Editor" -ForegroundColor Red
+    }
+    
     # Option 6: Combined with step toggles
     $color6 = if ($isRunning -or -not $hasSubmodules) { "DarkGray" } else { "Cyan" }
     $suffix6 = if (-not $hasSubmodules) { " (no .gitmodules)" } else { "" }
@@ -395,6 +400,23 @@ function Show-MainMenu {
                 if (Show-Confirmation "Clean intermediate and binaries?" -Dangerous) {
                     Invoke-CleanProject -CurrentProject $script:CurrentProject
                     Read-Host "Press Enter to continue"
+                }
+                Show-MainMenu -ForceClear
+                return
+            }
+        }
+        "7" {
+            if ($isRunning) {
+                if (Show-Confirmation "Stop running editor?" -Dangerous) {
+                    Write-Host ""
+                    Write-Host "Stopping editor..." -ForegroundColor Yellow
+                    $success = Stop-ProjectEditor -ProjectPath $script:CurrentProject
+                    if ($success) {
+                        Write-Host "Editor stopped successfully!" -ForegroundColor Green
+                    } else {
+                        Write-Host "Failed to stop editor or no matching process found." -ForegroundColor Yellow
+                    }
+                    Start-Sleep -Seconds 2
                 }
                 Show-MainMenu -ForceClear
                 return

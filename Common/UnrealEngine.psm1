@@ -419,6 +419,78 @@ function Test-ProjectRunning {
     return $false
 }
 
+function Stop-ProjectEditor {
+    <#
+    .SYNOPSIS
+    Terminates running Unreal Editor processes for a specific project.
+    #>
+    param([string]$ProjectPath)
+    
+    if (-not $ProjectPath) {
+        Write-Warning "No project path provided"
+        return $false
+    }
+    
+    $projectName = [System.IO.Path]::GetFileNameWithoutExtension($ProjectPath)
+    
+    # Get all processes without filtering first
+    $allProcesses = @()
+    try {
+        $allProcesses = Get-Process | Where-Object {
+            $_.ProcessName -match "^(UnrealEditor|UE4Editor)"
+        }
+    }
+    catch {
+        Write-Warning "Failed to get processes: $_"
+        return $false
+    }
+    
+    Write-Host "Looking for project: $projectName" -ForegroundColor Gray
+    Write-Host "Found $($allProcesses.Count) editor process(es)" -ForegroundColor Gray
+    
+    $killed = $false
+    
+    foreach ($proc in $allProcesses) {
+        Write-Host "  Process: $($proc.ProcessName) (PID: $($proc.Id))" -ForegroundColor Gray
+        Write-Host "  Window Title: '$($proc.MainWindowTitle)'" -ForegroundColor Gray
+        
+        # Check MainWindowTitle for project name (case-insensitive)
+        $title = $proc.MainWindowTitle
+        if ($title -and $title.IndexOf($projectName, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            try {
+                Write-Host "  -> MATCH! Terminating..." -ForegroundColor Yellow
+                Stop-Process -Id $proc.Id -Force
+                Start-Sleep -Milliseconds 500
+                $killed = $true
+            }
+            catch {
+                Write-Warning "Failed to terminate process $($proc.Id): $_"
+            }
+        } else {
+            Write-Host "  -> No match" -ForegroundColor DarkGray
+        }
+    }
+    
+    if (-not $killed) {
+        Write-Host ""
+        Write-Host "Debug: Trying alternate detection..." -ForegroundColor Yellow
+        # Fallback: kill any UnrealEditor process as last resort
+        foreach ($proc in $allProcesses) {
+            try {
+                Write-Host "  Terminating $($proc.ProcessName) (PID: $($proc.Id))" -ForegroundColor Yellow
+                Stop-Process -Id $proc.Id -Force
+                Start-Sleep -Milliseconds 500
+                $killed = $true
+            }
+            catch {
+                Write-Warning "Failed: $_"
+            }
+        }
+    }
+    
+    return $killed
+}
+
 # Export functions
 Export-ModuleMember -Function @(
     'Test-ValidEngineDirectory',
@@ -435,5 +507,6 @@ Export-ModuleMember -Function @(
     'Get-RunUATPath',
     'Invoke-UnrealBuildTool',
     'Invoke-RunUAT',
-    'Test-ProjectRunning'
+    'Test-ProjectRunning',
+    'Stop-ProjectEditor'
 )
