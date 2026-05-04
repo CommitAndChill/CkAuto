@@ -185,8 +185,15 @@ function Invoke-Git([string[]]$GitArgs, [string]$WorkingDir) {
 # Pull the first non-flag argument after the verb as the ref / target
 function Get-RefArg([string]$CommandLine, [string]$Verb) {
     $afterVerb = $CommandLine -replace ".*\bgit\s+(?:[^;&|]*?\s)?$Verb\s*", ''
-    $tokens = @($afterVerb -split '[\s;&|]+' | Where-Object { $_ -and ($_ -notmatch '^-') })
-    if ($tokens.Count -gt 0) { return $tokens[0] }
+    # Bare `-` is a valid ref (shorthand for @{-1}, the previous HEAD —
+    # used by `git checkout -` / `git switch -`). Anything else starting
+    # with `-` is a flag and gets stripped.
+    $tokens = @($afterVerb -split '[\s;&|]+' | Where-Object { $_ -and ($_ -eq '-' -or $_ -notmatch '^-') })
+    if ($tokens.Count -gt 0) {
+        $ref = $tokens[0]
+        if ($ref -eq '-') { $ref = '@{-1}' }
+        return $ref
+    }
     return $null
 }
 
