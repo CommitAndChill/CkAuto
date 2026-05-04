@@ -47,13 +47,35 @@ $cmd = $payload.tool_input.command
 if (-not $cmd) { Emit-Allow }
 
 # ---- 2. Filter: only react to git mutating verbs ---------------------------
-if ($cmd -notmatch '(^|[\s;&|`(])git\s') { Emit-Allow }
+# Tokenize each pipeline segment and look for the FIRST non-flag token after
+# `git` — that's the verb. Necessary to avoid false matches on verb-like words
+# that appear inside string arguments (e.g. `git commit -m "fix git checkout"`
+# would otherwise be misclassified as a checkout op).
+$mutatingVerbs = @('checkout','switch','rebase','merge','reset','pull','clean','restore','cherry-pick','revert','am','mv','rm','stash')
+$preVerbFlagsTakingValue = @('-C','-c','--git-dir','--work-tree','--namespace','--exec-path','--super-prefix')
 
-$mutatingPattern = '\bgit\s+(?:[^;&|]*\s)?(checkout|switch|rebase|merge|reset|pull|clean|restore|cherry-pick|revert|am|mv|rm|stash)\b'
-$mutatingMatch = [regex]::Match($cmd, $mutatingPattern)
-if (-not $mutatingMatch.Success) { Emit-Allow }
+function Get-GitMutatingVerb([string]$CommandLine) {
+    $segments = $CommandLine -split '\s*(?:;|&&|\|\||\|)\s*'
+    foreach ($seg in $segments) {
+        if ($seg -notmatch '^\s*git(\s|$)') { continue }
+        $rest = ($seg -replace '^\s*git\s+', '').Trim()
+        if (-not $rest) { continue }
+        $tokens = $rest -split '\s+'
+        $i = 0
+        while ($i -lt $tokens.Length) {
+            $t = $tokens[$i]
+            if ($script:preVerbFlagsTakingValue -contains $t) { $i += 2; continue }
+            if ($t -match '^-') { $i += 1; continue }
+            if ($script:mutatingVerbs -contains $t) { return $t }
+            # First non-flag token wasn't mutating; stop scanning this segment.
+            break
+        }
+    }
+    return $null
+}
 
-$verb = $mutatingMatch.Groups[1].Value
+$verb = Get-GitMutatingVerb $cmd
+if (-not $verb) { Emit-Allow }
 
 # `git stash` only mutates the working tree on pop/apply
 if ($verb -eq 'stash' -and $cmd -notmatch '\bstash\s+(pop|apply)\b') { Emit-Allow }
@@ -184,7 +206,23 @@ $enumerationFailed = $false
 
 switch ($verb) {
     { $_ -in 'checkout','switch' } {
-        $ref = Get-RefArg $cmd $verb
+        # New-branch creation: `git checkout -b/-B NAME` or `git switch -c/-C NAME`.
+        # Without a start_point, this just creates a ref pointing at HEAD —
+        # zero working-tree changes, no asset risk. Silent pass even with the
+        # editor open. With a start_point, fall through and enumerate against
+        # that start_point (NOT against the new branch name, which doesn't
+        # exist yet).
+        $createFlag = if ($verb -eq 'checkout') { '[bB]' } else { '[cC]' }
+        if ($cmd -match "\bgit\s+(?:[^;&|]*?\s)?$verb\s.*?-$createFlag\s+\S+(?:\s+(\S+))?") {
+            $startPoint = $matches[1]
+            if (-not $startPoint -or $startPoint -match '^-') {
+                # Pure ref creation at HEAD; nothing to enumerate.
+                Emit-Allow
+            }
+            $ref = $startPoint
+        } else {
+            $ref = Get-RefArg $cmd $verb
+        }
         if ($ref) { $affected = Invoke-Git @('diff','--name-only','HEAD',$ref) $gitTop }
         if ($null -eq $affected) { $enumerationFailed = $true }
     }
