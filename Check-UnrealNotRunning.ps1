@@ -239,6 +239,14 @@ switch ($verb) {
         if ($null -eq $affected) { $enumerationFailed = $true }
     }
     'reset' {
+        # Working-tree-touching reset modes: --hard / --merge / --keep.
+        # Everything else (--soft, --mixed [default], pathspec form
+        # `git reset HEAD -- <paths>`) only affects HEAD and/or the index;
+        # the working tree is untouched, so there's no asset-corruption
+        # risk for the editor to worry about.
+        if ($cmd -notmatch '(?:^|\s)--(?:hard|merge|keep)(?:\s|$)') {
+            Emit-Allow
+        }
         $ref = Get-RefArg $cmd $verb
         $list = $null
         if ($ref) {
