@@ -46,6 +46,80 @@ try {
 $cmd = $payload.tool_input.command
 if (-not $cmd) { Emit-Allow }
 
+# ---- Shared helpers --------------------------------------------------------
+# Walk up from a starting directory until a sibling .uproject is found. Returns
+# the directory that contains the .uproject, or $null if none is reachable.
+function Find-ProjectRoot([string]$StartDir) {
+    if (-not $StartDir) { return $null }
+    $dir = $StartDir
+    while ($dir -and -not (Get-ChildItem -LiteralPath $dir -Filter '*.uproject' -ErrorAction SilentlyContinue)) {
+        $parent = Split-Path -Parent $dir
+        if (-not $parent -or $parent -eq $dir) { return $null }
+        $dir = $parent
+    }
+    return $dir
+}
+
+function Resolve-ProjectRoot {
+    $root = $env:CLAUDE_PROJECT_DIR
+    if ($root -and (Test-Path -LiteralPath $root)) {
+        $found = Find-ProjectRoot $root
+        if ($found) { return $found }
+    }
+    return (Find-ProjectRoot (Split-Path -Parent $PSCommandPath))
+}
+
+# Editor-running probe: any exclusively-locked .log under Saved/Logs means an
+# editor for this project is running. UE keeps its active log file under an
+# exclusive write lock for the editor's lifetime. We do NOT scan process names —
+# custom engine forks rename the editor binary, so process-name scans produce
+# both false positives (other projects) and false negatives (renamed binary).
+function Test-EditorRunning([string]$Root) {
+    $logsDir = Join-Path $Root 'Saved/Logs'
+    if (-not (Test-Path -LiteralPath $logsDir)) { return $false }
+
+    $logs = Get-ChildItem -LiteralPath $logsDir -Filter '*.log' -File -ErrorAction SilentlyContinue
+    foreach ($log in $logs) {
+        try {
+            $fs = [System.IO.File]::Open(
+                $log.FullName,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Write,
+                [System.IO.FileShare]::None)
+            $fs.Close()
+        } catch {
+            return $true
+        }
+    }
+    return $false
+}
+
+# ---- 2a. Build.bat guard ---------------------------------------------------
+# Engine's Build.bat (Engine\Build\BatchFiles\Build.bat) compiles the editor
+# DLLs the running editor has loaded — building while the editor is open can
+# corrupt hot-reload state. Block invocations whenever the editor is running
+# for this project.
+function Test-IsBuildBatInvocation([string]$CommandLine) {
+    $segments = $CommandLine -split '\s*(?:;|&&|\|\||\|)\s*'
+    foreach ($seg in $segments) {
+        $stripped = $seg -replace '"', '' -replace "'", ''
+        if ($stripped -match '(?i)\bBuild\.bat\b') { return $true }
+    }
+    return $false
+}
+
+if (Test-IsBuildBatInvocation $cmd) {
+    if ($env:SKIP_UNREAL_GUARD -eq '1') { Emit-Allow }
+    $buildProjectRoot = Resolve-ProjectRoot
+    if (-not $buildProjectRoot) { Emit-Allow }
+    if (-not (Test-EditorRunning $buildProjectRoot)) { Emit-Allow }
+    Emit-Decision 'deny' (
+        "UnrealEditor is running for this project — building while the editor is open " +
+        "can corrupt hot-reload state and DLLs. Close the editor and retry, or set " +
+        "SKIP_UNREAL_GUARD=1 if you accept the risk."
+    )
+}
+
 # ---- 2. Filter: only react to git mutating verbs ---------------------------
 # Tokenize each pipeline segment and look for the FIRST non-flag token after
 # `git` — that's the verb. Necessary to avoid false matches on verb-like words
@@ -84,44 +158,10 @@ if ($verb -eq 'stash' -and $cmd -notmatch '\bstash\s+(pop|apply)\b') { Emit-Allo
 if ($env:SKIP_UNREAL_GUARD -eq '1') { Emit-Allow }
 
 # ---- 3. Locate project root -----------------------------------------------
-$projectRoot = $env:CLAUDE_PROJECT_DIR
-if (-not $projectRoot -or -not (Test-Path $projectRoot)) {
-    # Fallback: walk up from the script's own location until we find a .uproject
-    $dir = Split-Path -Parent $PSCommandPath
-    while ($dir -and -not (Get-ChildItem -LiteralPath $dir -Filter '*.uproject' -ErrorAction SilentlyContinue)) {
-        $parent = Split-Path -Parent $dir
-        if ($parent -eq $dir) { Emit-Allow }
-        $dir = $parent
-    }
-    $projectRoot = $dir
-}
+$projectRoot = Resolve-ProjectRoot
+if (-not $projectRoot) { Emit-Allow }
 
-# ---- 4. Editor-running probe (port of EditorDetection.cpp) ----------------
-# Any exclusively-locked .log under this project's Saved/Logs means an editor
-# for THIS project is running. UE keeps its active log file under an exclusive
-# write lock for the editor's lifetime. We do NOT scan process names — custom
-# engine forks rename the editor binary, so process-name scans produce both
-# false positives (other projects) and false negatives (renamed binary).
-function Test-EditorRunning([string]$Root) {
-    $logsDir = Join-Path $Root 'Saved/Logs'
-    if (-not (Test-Path -LiteralPath $logsDir)) { return $false }
-
-    $logs = Get-ChildItem -LiteralPath $logsDir -Filter '*.log' -File -ErrorAction SilentlyContinue
-    foreach ($log in $logs) {
-        try {
-            $fs = [System.IO.File]::Open(
-                $log.FullName,
-                [System.IO.FileMode]::Open,
-                [System.IO.FileAccess]::Write,
-                [System.IO.FileShare]::None)
-            $fs.Close()
-        } catch {
-            return $true
-        }
-    }
-    return $false
-}
-
+# ---- 4. Editor-running probe (Test-EditorRunning defined above) -----------
 if (-not (Test-EditorRunning $projectRoot)) { Emit-Allow }
 
 # ---- 5. Engine-locked path predicate (port of EditorGuard.hpp) ------------
