@@ -99,11 +99,27 @@ function Test-EditorRunning([string]$Root) {
 # DLLs the running editor has loaded — building while the editor is open can
 # corrupt hot-reload state. Block invocations whenever the editor is running
 # for this project.
+#
+# Match only when Build.bat is the FIRST whitespace-delimited token of a
+# pipeline segment (optionally preceded by `&`, `call`, or a leading `(`/quote).
+# This ensures we fire on real invocations like:
+#     "D:/.../Build.bat" Foo Win64 ...
+#     & "$engine\...\Build.bat" Foo
+#     call Build.bat Foo
+#     cd dir && Build.bat Foo                  (second segment after &&)
+# but NOT on the literal text appearing inside another command's argument:
+#     echo 'Build.bat'
+#     git commit -m "blocks Build.bat"
+#     cat <<EOF ... Build.bat ... EOF
 function Test-IsBuildBatInvocation([string]$CommandLine) {
     $segments = $CommandLine -split '\s*(?:;|&&|\|\||\|)\s*'
     foreach ($seg in $segments) {
-        $stripped = $seg -replace '"', '' -replace "'", ''
-        if ($stripped -match '(?i)\bBuild\.bat\b') { return $true }
+        # \S* matches non-whitespace chars within the first token only — so a
+        # path-prefixed Build.bat counts, but Build.bat sitting after a space
+        # (i.e. as an argument to another command) does not.
+        if ($seg -match '(?i)^\s*\(?\s*(?:&\s+)?(?:call\s+)?["'']?\S*Build\.bat\b') {
+            return $true
+        }
     }
     return $false
 }
