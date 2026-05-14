@@ -12,6 +12,12 @@
 #   D:/Repos/FtxCatalyst/libs/UnrealKit/src/EditorDetection.cpp
 # (probe Saved/Logs/*.log for an exclusive write lock — UE holds the active log
 #  exclusively for the editor's lifetime; immune to renamed editor binaries.)
+#
+# NOTE for future contributors writing process-name-based editor detection:
+# the editor binary for this project is named `BusterBlockEditor.exe`, NOT
+# `UnrealEditor.exe`. UE renames the target binary using the .uproject name.
+# `tasklist | findstr -i unreal` and `Get-Process UnrealEditor*` both MISS it.
+# The log-lock probe used here is name-agnostic and is the right approach.
 
 $ErrorActionPreference = 'Stop'
 
