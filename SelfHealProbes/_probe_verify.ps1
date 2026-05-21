@@ -17,9 +17,16 @@
 
 .PARAMETER Probe
     Which probe to verify:
-      merge_conflict  — cold-start bootstrap drain (multi-strategy)
-      mid_session_add — mid-session ticker drain (multi-strategy)
-      tier3           — Tier 3 refusal banner (no sidecar — fixed events)
+      merge_conflict      — cold-start bootstrap drain (multi-strategy)
+      mid_session_add     — mid-session ticker drain (multi-strategy)
+      tier3               — Tier 3 refusal banner (no sidecar — fixed events)
+      assetregistry_loop  — verifies the AR stub-deletion-loop bug does NOT
+                            recur. Positive: synth + regen-completed each
+                            fire ≥1 time. Negative: after the FIRST
+                            'Asset Registry generation completed' line, ZERO
+                            further 'OnReloadHadErrors fired (mid-session
+                            mode' lines may appear (i.e. the loop must
+                            converge after one regen).
 
 .PARAMETER LogPath
     Optional explicit log path. If omitted, the newest
@@ -40,7 +47,7 @@
 #>
 Param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('merge_conflict', 'mid_session_add', 'tier3')]
+    [ValidateSet('merge_conflict', 'mid_session_add', 'tier3', 'assetregistry_loop')]
     [string]$Probe,
 
     [string]$LogPath,
@@ -168,6 +175,33 @@ elseif ($Probe -eq 'mid_session_add') {
     }
     $events += New-Event 'Self-heal stub file served its purpose — deleting:' 'Self-heal stub file served its purpose — deleting:' -Anywhere
 }
+elseif ($Probe -eq 'assetregistry_loop') {
+    # Probe C — verifies the bug at CkAngelscriptGenerator_Module.cpp:561‑577
+    # (PostCompile lambda deletes _StubRecovery_*Assets.as synchronously
+    # BEFORE the deferred AR regen ticker has rewritten the canonical) does
+    # NOT recur after a successful regen. Authored 2026‑05‑21 against
+    # CkFoundation HEAD f2a5cc29b — see Saved/Logs trace at 09:09‑09:16.
+    $sidecarPath = Join-Path $projectRoot 'Script\_probe_assetregistry_loop.targets.json'
+    if (-not (Test-Path $sidecarPath)) {
+        Write-Error "Sidecar not found: $sidecarPath. Run _probe_assetregistry_loop.bat first."
+        exit 2
+    }
+    $sc = Get-Content $sidecarPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host "Sidecar target: Asset=$($sc.AssetName)" -ForegroundColor DarkCyan
+    Write-Host ''
+
+    $assetEsc = [regex]::Escape($sc.AssetName)
+
+    # Positive — these MUST fire at least once
+    $events += New-Event "Synthesized AssetRegistry stub for assets::$($sc.AssetName)" `
+                        "Synthesized AssetRegistry stub for assets::$assetEsc" -Anywhere
+    $events += New-Event 'Asset Registry generation completed' `
+                        'Asset Registry generation completed: \d+ succeeded, \d+ failed' -Anywhere
+
+    # The loop assertion is handled separately in Phase 4 below (not via the
+    # event factory), because it's a count-after-line assertion, not a
+    # match-anywhere.
+}
 elseif ($Probe -eq 'tier3') {
     # Tier 3 refusal probe — fixed events (no sidecar; the probe injects a
     # fake asset name that's the same every run).
@@ -235,13 +269,49 @@ foreach ($evt in $remaining) {
     Write-Host ("[FAIL] — Expected: {0} (pattern: /{1}/ not found{2})" -f $evt.Description, $evt.Pattern, $(if ($Tail) { ' — tail interrupted before fire' } else { '' })) -ForegroundColor Red
 }
 
+# Phase 4: assetregistry_loop — count mid-session cycle openings AFTER the
+# first AR regen completion. >0 such openings = the bug is present (the stub
+# was deleted before the canonical was rewritten, hot-reload re-fired, mid-
+# session cycle 2 opened). All other probe types short-circuit this block.
+$loopAssertionPassed = $true
+if ($Probe -eq 'assetregistry_loop') {
+    $finalLines = Get-Content -LiteralPath $LogPath -Encoding UTF8
+    $regenCompletedIdx = -1
+    for ($i = 0; $i -lt $finalLines.Count; ++$i) {
+        if ($finalLines[$i] -match 'Asset Registry generation completed: \d+ succeeded, \d+ failed') {
+            $regenCompletedIdx = $i
+            break
+        }
+    }
+    if ($regenCompletedIdx -eq -1) {
+        Write-Host ("[FAIL] LOOP-CHECK — no 'Asset Registry generation completed' line found; cannot bracket the loop assertion.") -ForegroundColor Red
+        $loopAssertionPassed = $false
+    }
+    else {
+        $postRegenCycles = @()
+        for ($i = $regenCompletedIdx + 1; $i -lt $finalLines.Count; ++$i) {
+            if ($finalLines[$i] -match 'OnReloadHadErrors fired \(mid-session mode, cycle (\d+) of 3\)') {
+                $postRegenCycles += [int]$matches[1]
+            }
+        }
+        if ($postRegenCycles.Count -eq 0) {
+            Write-Host ("[PASS] LOOP-CHECK — 0 mid-session cycle openings after AR regen completed (loop converged).") -ForegroundColor Green
+        }
+        else {
+            Write-Host ("[FAIL] LOOP-CHECK — $($postRegenCycles.Count) mid-session cycle opening(s) fired AFTER the first 'Asset Registry generation completed' line (cycles: $($postRegenCycles -join ', ')). The PostCompile-ordering bug is present: stubs were deleted before the canonical was rewritten, hot-reload re-fired, self-heal looped.") -ForegroundColor Red
+            $loopAssertionPassed = $false
+        }
+    }
+}
+
 Write-Host ''
 $total = $events.Count
-if ($passes -eq $total) {
-    Write-Host ("VERDICT: $passes of $total events matched. PROBE PASSED.") -ForegroundColor Green
+$allPositiveMatched = ($passes -eq $total)
+if ($allPositiveMatched -and $loopAssertionPassed) {
+    Write-Host ("VERDICT: $passes of $total events matched$(if ($Probe -eq 'assetregistry_loop') { ' + loop-check passed' } else { '' }). PROBE PASSED.") -ForegroundColor Green
     exit 0
 }
 else {
-    Write-Host ("VERDICT: $passes of $total events matched. PROBE FAILED.") -ForegroundColor Red
+    Write-Host ("VERDICT: $passes of $total events matched$(if ($Probe -eq 'assetregistry_loop' -and -not $loopAssertionPassed) { ' BUT loop-check FAILED' } else { '' }). PROBE FAILED.") -ForegroundColor Red
     exit 1
 }

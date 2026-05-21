@@ -25,6 +25,7 @@ PASS/FAIL.
 | `_probe_merge_conflict.{bat,_restore.bat}` | Cold-start, bootstrap modal-tick drain | Up to three simultaneous drifts (AssetRegistry + DynamicHandle + EntitySpawnParams) resolved in a single bootstrap cycle, followed by PostCompile canonical regen + stub cleanup. Each strategy independently skips if no callable target exists. |
 | `_probe_mid_session_add.{bat,_restore.bat}` | Mid-session, FTSTicker drain | A new `.as` file referencing up to three unresolved symbols dropped at runtime; mid-session ticker fires strategies across multiple cycles as hot-reload retries surface each error. |
 | `_probe_tier3_{corrupt.bat,restore.bat}` | Tier 3 refusal validation | Calls a deliberately-fake asset accessor. Validates the post-2026-05-13 dispatcher behavior: Tier 1/2 fail → Tier 3 refuses → actionable banner surfaces instead of editor wedging on a parser-blind derivative error. |
+| `_probe_assetregistry_loop.{bat,_restore.bat}` | Mid-session, AR-only — loop-detection | Drops an AS class that calls exactly ONE unresolved `assets::X()`. Positive: AR stub synth + AR regen-completed each fire ≥1 time. **Negative (the bug pin)**: after the first `Asset Registry generation completed` line, ZERO further `OnReloadHadErrors fired (mid-session mode, cycle N of 3)` lines may appear — pins the post-2026-05-21 PostCompile-ordering bug (Delete_AllStubRecoveryFiles runs sync before the deferred AR regen ticker has rewritten canonical → hot-reload re-fires → loop). |
 
 ## Runtime discovery
 
@@ -188,6 +189,7 @@ have eyes-on the editor window:
   | merge_conflict | MUST be closed (probe refuses if log lock detected) |
   | mid_session_add | MUST be running (probe only warns, doesn't refuse) |
   | tier3 | MUST be closed (probe refuses; cold-start triggers the recovery path) |
+  | assetregistry_loop | MUST be running (probe only warns, doesn't refuse) |
 - **Settle window**: after launching the editor for merge_conflict or
   tier3, wait until the editor's main viewport is visible — typically
   30–90s on a warm DDC, longer on first-build or shader compile. The
