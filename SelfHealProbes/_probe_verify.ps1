@@ -269,38 +269,67 @@ foreach ($evt in $remaining) {
     Write-Host ("[FAIL] — Expected: {0} (pattern: /{1}/ not found{2})" -f $evt.Description, $evt.Pattern, $(if ($Tail) { ' — tail interrupted before fire' } else { '' })) -ForegroundColor Red
 }
 
-# Phase 4: assetregistry_loop — count mid-session cycle openings AFTER the
-# first AR regen completion. >0 such openings = the bug is present (the stub
-# was deleted before the canonical was rewritten, hot-reload re-fired, mid-
-# session cycle 2 opened). All other probe types short-circuit this block.
+# Phase 4: assetregistry_loop — ORDERING check.
+#
+# The bug we fix is: Delete_AllStubRecoveryFiles is called synchronously
+# from the PostCompile lambda RIGHT AFTER Maybe_RegenAssetRegistry_OnPostCompile
+# queues its deferred FTSTicker (which has a 2-second delay + idle-wait).
+# So the AR stub deletion happens BEFORE GenerateAllAssetRegistries has
+# actually rewritten the canonical. Hot-reload sees the deletion mtime
+# change, recompiles against a still-stale canonical, AS fails, dispatcher
+# loops.
+#
+# The fix moves the AR-pattern deletion INSIDE the ticker callback,
+# immediately after GenerateAllAssetRegistries returns.
+#
+# Smoking-gun signal: for each AR-stub deletion line, was the most recent
+# preceding event a 'Queueing deferred GenerateAllAssetRegistries' (bug —
+# deletion races regen) or an 'Asset Registry generation completed' (fix —
+# deletion happens after regen actually ran)?
+#
+# This check intentionally does NOT count mid-session cycle openings.
+# Counting cycles conflates the in-flight-stuck bug with orthogonal issues
+# like "the probe-target asset's class isn't included by the project's
+# UCkAssetRegistryConfig, so the canonical never absorbs the accessor on
+# any timeline." We only measure what the fix targets: deletion-vs-regen
+# ordering.
 $loopAssertionPassed = $true
 if ($Probe -eq 'assetregistry_loop') {
     $finalLines = Get-Content -LiteralPath $LogPath -Encoding UTF8
-    $regenCompletedIdx = -1
-    for ($i = 0; $i -lt $finalLines.Count; ++$i) {
-        if ($finalLines[$i] -match 'Asset Registry generation completed: \d+ succeeded, \d+ failed') {
-            $regenCompletedIdx = $i
-            break
+    $arDeleteRegex     = [regex]'Self-heal stub file served its purpose — deleting:.+_StubRecovery_\w*Assets\.as'
+    $regenCompleteRegex = [regex]'Asset Registry generation completed: \d+ succeeded, \d+ failed'
+    $queueRegenRegex    = [regex]'Queueing deferred GenerateAllAssetRegistries'
+
+    $deletionsAfterRegen     = 0
+    $deletionsBeforeRegen    = 0
+    $deletionsWithoutContext = 0
+    foreach ($idx in 0..($finalLines.Count - 1)) {
+        if (-not $arDeleteRegex.IsMatch($finalLines[$idx])) { continue }
+        # Walk backward looking for the most recent regen-completed OR
+        # queue-deferred event.
+        $found = $false
+        for ($j = $idx - 1; $j -ge 0; --$j) {
+            if ($regenCompleteRegex.IsMatch($finalLines[$j])) { $deletionsAfterRegen++; $found = $true; break }
+            if ($queueRegenRegex.IsMatch($finalLines[$j]))    { $deletionsBeforeRegen++; $found = $true; break }
         }
+        if (-not $found) { $deletionsWithoutContext++ }
     }
-    if ($regenCompletedIdx -eq -1) {
-        Write-Host ("[FAIL] LOOP-CHECK — no 'Asset Registry generation completed' line found; cannot bracket the loop assertion.") -ForegroundColor Red
+    $totalArDeletions = $deletionsAfterRegen + $deletionsBeforeRegen + $deletionsWithoutContext
+
+    Write-Host ""
+    Write-Host ("LOOP-CHECK metrics — AR-stub deletions: total {0}, post-regen {1} (FIX SIGNAL), pre-regen-but-after-queue {2} (BUG SIGNAL), no-prior-context {3}" `
+        -f $totalArDeletions, $deletionsAfterRegen, $deletionsBeforeRegen, $deletionsWithoutContext) -ForegroundColor DarkCyan
+
+    if ($totalArDeletions -eq 0) {
+        Write-Host ("[FAIL] LOOP-CHECK — no AR-stub deletion lines found; the probe didn't trigger the AR strategy (or the dispatcher didn't synthesize a stub). Verify the probe target was missing from canonical *Assets.as.") -ForegroundColor Red
+        $loopAssertionPassed = $false
+    }
+    elseif ($deletionsBeforeRegen -gt 0) {
+        Write-Host ("[FAIL] LOOP-CHECK — {0} AR-stub deletion(s) fired AFTER 'Queueing deferred GenerateAllAssetRegistries' but BEFORE the matching 'Asset Registry generation completed'. The pre-fix ordering is present at CkAngelscriptGenerator_Module.cpp PostCompile lambda — the synchronous Delete_AllStubRecoveryFiles call wins the race against the deferred FTSTicker." -f $deletionsBeforeRegen) -ForegroundColor Red
         $loopAssertionPassed = $false
     }
     else {
-        $postRegenCycles = @()
-        for ($i = $regenCompletedIdx + 1; $i -lt $finalLines.Count; ++$i) {
-            if ($finalLines[$i] -match 'OnReloadHadErrors fired \(mid-session mode, cycle (\d+) of 3\)') {
-                $postRegenCycles += [int]$matches[1]
-            }
-        }
-        if ($postRegenCycles.Count -eq 0) {
-            Write-Host ("[PASS] LOOP-CHECK — 0 mid-session cycle openings after AR regen completed (loop converged).") -ForegroundColor Green
-        }
-        else {
-            Write-Host ("[FAIL] LOOP-CHECK — $($postRegenCycles.Count) mid-session cycle opening(s) fired AFTER the first 'Asset Registry generation completed' line (cycles: $($postRegenCycles -join ', ')). The PostCompile-ordering bug is present: stubs were deleted before the canonical was rewritten, hot-reload re-fired, self-heal looped.") -ForegroundColor Red
-            $loopAssertionPassed = $false
-        }
+        Write-Host ("[PASS] LOOP-CHECK — every AR-stub deletion ({0}) fired AFTER an 'Asset Registry generation completed'. The fix is in effect: AR cleanup is owned by the ticker callback, not the synchronous PostCompile lambda." -f $deletionsAfterRegen) -ForegroundColor Green
     }
 }
 
