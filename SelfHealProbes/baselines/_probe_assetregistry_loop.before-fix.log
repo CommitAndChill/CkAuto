@@ -1,11 +1,11 @@
 Project: BusterBlock
-Verifying against log: D:/Repos/BusterBlock/Saved/Logs/BusterBlock-backup-2026.05.21-18.32.28.log
+Verifying against log: D:\Repos\BusterBlock\Saved\Logs\BusterBlock.log
 Sidecar target: Asset=SKEL_Shared_Master_BB
 
-[PASS] @ 2026.05.21-18.30.49:519 - Synthesized AssetRegistry stub for assets::SKEL_Shared_Master_BB (anywhere)
-[PASS] @ 2026.05.21-18.30.52:267 - Asset Registry generation completed (anywhere)
+[PASS] @ 2026.05.21-19.30.18:192 - Synthesized AssetRegistry stub for assets::SKEL_Shared_Master_BB (anywhere)
+[PASS] @ 2026.05.21-19.30.20:912 - Asset Registry generation completed (anywhere)
 
-LOOP-CHECK metrics - AR-stub deletions: total 63, post-regen 0 (FIX SIGNAL), pre-regen-but-after-queue 63 (BUG SIGNAL), no-prior-context 0
-[FAIL] LOOP-CHECK - 63 AR-stub deletion(s) fired AFTER 'Queueing deferred GenerateAllAssetRegistries' but BEFORE the matching 'Asset Registry generation completed'. The pre-fix ordering is present at CkAngelscriptGenerator_Module.cpp PostCompile lambda - the synchronous Delete_AllStubRecoveryFiles call wins the race against the deferred FTSTicker.
+LOOP-CHECK metrics - AR-stub deletions: total 28, post-regen 0 (FIX SIGNAL), pre-regen-but-after-queue 28 (BUG SIGNAL), no-prior-context 0
+[FAIL] LOOP-CHECK - 28 AR-stub deletion(s) fired AFTER 'Queueing deferred GenerateAllAssetRegistries' but BEFORE the matching 'Asset Registry generation completed'. The pre-fix ordering is present at CkAngelscriptGenerator_Module.cpp PostCompile lambda - the synchronous Delete_AllStubRecoveryFiles call wins the race against the deferred FTSTicker.
 
 VERDICT: 2 of 2 events matched BUT loop-check FAILED. PROBE FAILED.
