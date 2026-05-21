@@ -148,6 +148,20 @@ The `_StubRecovery_*` sibling files the dispatcher itself writes are
 covered by a separate gitignore stanza alongside the `Script/Generated/`
 tree.
 
+**Probe baselines** (`SelfHealProbes/baselines/`) are captured on demand,
+not committed. Each verifier run prints timestamps, absolute paths, and
+counts that depend on session duration — pinning a single capture creates
+diff noise and goes stale as the verifier evolves. Capture one when you
+need evidence for a PR:
+
+```cmd
+:: capture under SelfHealProbes/baselines/ (gitignored)
+pwsh _probe_verify.ps1 assetregistry_loop > baselines\<probe>.<context>.log
+```
+
+Quote the smoking-gun metric in the PR description; throw the captured
+log away after review.
+
 ## When to add a new probe
 
 A new probe is warranted when:

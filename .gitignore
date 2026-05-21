@@ -1,0 +1,3 @@
+# SelfHealProbes runtime artifacts — captured per-machine on demand. Paths +
+# timestamps + run-dependent counts make these too noisy to track.
+SelfHealProbes/baselines/
