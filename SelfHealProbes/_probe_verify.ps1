@@ -20,13 +20,10 @@
       merge_conflict      — cold-start bootstrap drain (multi-strategy)
       mid_session_add     — mid-session ticker drain (multi-strategy)
       tier3               — Tier 3 refusal banner (no sidecar — fixed events)
-      assetregistry_loop  — verifies the AR stub-deletion-loop bug does NOT
-                            recur. Positive: synth + regen-completed each
-                            fire ≥1 time. Negative: after the FIRST
-                            'Asset Registry generation completed' line, ZERO
-                            further 'OnReloadHadErrors fired (mid-session
-                            mode' lines may appear (i.e. the loop must
-                            converge after one regen).
+      assetregistry_loop  — verifies AR-sibling deletion happens AFTER the
+                            regen ticker rewrites the canonical (post-fix)
+                            rather than BEFORE (pre-fix). See the Probe C
+                            row in README.md.
 
 .PARAMETER LogPath
     Optional explicit log path. If omitted, the newest
@@ -176,11 +173,8 @@ elseif ($Probe -eq 'mid_session_add') {
     $events += New-Event 'Self-heal stub file served its purpose — deleting:' 'Self-heal stub file served its purpose — deleting:' -Anywhere
 }
 elseif ($Probe -eq 'assetregistry_loop') {
-    # Probe C — verifies the bug at CkAngelscriptGenerator_Module.cpp:561‑577
-    # (PostCompile lambda deletes _StubRecovery_*Assets.as synchronously
-    # BEFORE the deferred AR regen ticker has rewritten the canonical) does
-    # NOT recur after a successful regen. Authored 2026‑05‑21 against
-    # CkFoundation HEAD f2a5cc29b — see Saved/Logs trace at 09:09‑09:16.
+    # Probe C — positive events here; the load-bearing ordering check runs
+    # in Phase 4 below.
     $sidecarPath = Join-Path $projectRoot 'Script\_probe_assetregistry_loop.targets.json'
     if (-not (Test-Path $sidecarPath)) {
         Write-Error "Sidecar not found: $sidecarPath. Run _probe_assetregistry_loop.bat first."
@@ -192,15 +186,11 @@ elseif ($Probe -eq 'assetregistry_loop') {
 
     $assetEsc = [regex]::Escape($sc.AssetName)
 
-    # Positive — these MUST fire at least once
+    # Positive — these MUST fire at least once. Ordering check is Phase 4.
     $events += New-Event "Synthesized AssetRegistry stub for assets::$($sc.AssetName)" `
                         "Synthesized AssetRegistry stub for assets::$assetEsc" -Anywhere
     $events += New-Event 'Asset Registry generation completed' `
                         'Asset Registry generation completed: \d+ succeeded, \d+ failed' -Anywhere
-
-    # The loop assertion is handled separately in Phase 4 below (not via the
-    # event factory), because it's a count-after-line assertion, not a
-    # match-anywhere.
 }
 elseif ($Probe -eq 'tier3') {
     # Tier 3 refusal probe — fixed events (no sidecar; the probe injects a
@@ -269,30 +259,12 @@ foreach ($evt in $remaining) {
     Write-Host ("[FAIL] — Expected: {0} (pattern: /{1}/ not found{2})" -f $evt.Description, $evt.Pattern, $(if ($Tail) { ' — tail interrupted before fire' } else { '' })) -ForegroundColor Red
 }
 
-# Phase 4: assetregistry_loop — ORDERING check.
-#
-# The bug we fix is: Delete_AllStubRecoveryFiles is called synchronously
-# from the PostCompile lambda RIGHT AFTER Maybe_RegenAssetRegistry_OnPostCompile
-# queues its deferred FTSTicker (which has a 2-second delay + idle-wait).
-# So the AR stub deletion happens BEFORE GenerateAllAssetRegistries has
-# actually rewritten the canonical. Hot-reload sees the deletion mtime
-# change, recompiles against a still-stale canonical, AS fails, dispatcher
-# loops.
-#
-# The fix moves the AR-pattern deletion INSIDE the ticker callback,
-# immediately after GenerateAllAssetRegistries returns.
-#
-# Smoking-gun signal: for each AR-stub deletion line, was the most recent
-# preceding event a 'Queueing deferred GenerateAllAssetRegistries' (bug —
-# deletion races regen) or an 'Asset Registry generation completed' (fix —
-# deletion happens after regen actually ran)?
-#
-# This check intentionally does NOT count mid-session cycle openings.
-# Counting cycles conflates the in-flight-stuck bug with orthogonal issues
-# like "the probe-target asset's class isn't included by the project's
-# UCkAssetRegistryConfig, so the canonical never absorbs the accessor on
-# any timeline." We only measure what the fix targets: deletion-vs-regen
-# ordering.
+# Phase 4: assetregistry_loop — for each AR-stub deletion, was the most
+# recent preceding event a 'Queueing deferred GenerateAllAssetRegistries'
+# (BUG — deletion races the deferred ticker) or an 'Asset Registry
+# generation completed' (FIX — deletion happens after regen actually ran)?
+# Mid-session cycle counts are intentionally NOT used here; they conflate
+# this bug with orthogonal issues (asset class excluded from canonical etc.).
 $loopAssertionPassed = $true
 if ($Probe -eq 'assetregistry_loop') {
     $finalLines = Get-Content -LiteralPath $LogPath -Encoding UTF8
@@ -325,11 +297,11 @@ if ($Probe -eq 'assetregistry_loop') {
         $loopAssertionPassed = $false
     }
     elseif ($deletionsBeforeRegen -gt 0) {
-        Write-Host ("[FAIL] LOOP-CHECK — {0} AR-stub deletion(s) fired AFTER 'Queueing deferred GenerateAllAssetRegistries' but BEFORE the matching 'Asset Registry generation completed'. The pre-fix ordering is present at CkAngelscriptGenerator_Module.cpp PostCompile lambda — the synchronous Delete_AllStubRecoveryFiles call wins the race against the deferred FTSTicker." -f $deletionsBeforeRegen) -ForegroundColor Red
+        Write-Host ("[FAIL] LOOP-CHECK — {0} AR-stub deletion(s) fired BEFORE the matching regen completed. The synchronous deletion in PostCompile is racing the deferred FTSTicker (pre-fix ordering)." -f $deletionsBeforeRegen) -ForegroundColor Red
         $loopAssertionPassed = $false
     }
     else {
-        Write-Host ("[PASS] LOOP-CHECK — every AR-stub deletion ({0}) fired AFTER an 'Asset Registry generation completed'. The fix is in effect: AR cleanup is owned by the ticker callback, not the synchronous PostCompile lambda." -f $deletionsAfterRegen) -ForegroundColor Green
+        Write-Host ("[PASS] LOOP-CHECK — every AR-stub deletion ({0}) fired AFTER its regen completed. AR cleanup is owned by the ticker callback." -f $deletionsAfterRegen) -ForegroundColor Green
     }
 }
 

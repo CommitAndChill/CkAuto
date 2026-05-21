@@ -1,33 +1,10 @@
 #requires -Version 7
 <#
 .SYNOPSIS
-    Probe C: AssetRegistry stub-deletion-loop reproduction.
-
-.DESCRIPTION
-    Drops an AS file referencing exactly ONE unresolved asset accessor — no
-    class, no handle. The minimal trigger for the post-2026-05-21 self-heal
-    PostCompile-ordering bug where Delete_AllStubRecoveryFiles runs
-    synchronously before Maybe_RegenAssetRegistry_OnPostCompile's deferred
-    FTSTicker has actually rewritten the canonical *Assets.as.
-
-    On a buggy CkFoundation, the sequence is:
-      1. AS compile fails (asset not in canonical).
-      2. Self-heal synthesizes _StubRecovery_*Assets.as.
-      3. AS compile succeeds via merged stub namespace.
-      4. PostCompile lambda queues deferred AR regen, then SYNCHRONOUSLY
-         deletes the stub sibling.
-      5. Hot-reload sees mtime change, recompiles. Canonical hasn't been
-         rewritten yet (ticker hasn't fired), so AS fails again.
-      6. Mid-session cycle 2 fires. Stub re-synthesized. Loop.
-
-    The verifier (`_probe_verify.ps1 assetregistry_loop`) detects the loop by
-    counting `OnReloadHadErrors fired (mid-session mode, cycle X of 3)` lines
-    after the first `Asset Registry generation completed`. >0 such lines =
-    bug present = PROBE FAIL.
-
-.NOTES
-    Editor MUST already be running (same lifecycle requirement as Probe B).
-    Run `_probe_assetregistry_loop_restore.bat` afterward.
+    Probe C — drops a single-strategy AR-only trigger AS file. Pairs with
+    `_probe_verify.ps1 assetregistry_loop`, which asserts AR-sibling
+    deletion happens AFTER the regen ticker runs (post-fix) vs BEFORE
+    (pre-fix). Editor MUST be running.
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -70,8 +47,12 @@ if (-not $editorRunning) {
 }
 
 # ---- Pick an unaccessed asset (parse Discovery roots from *Assets.as) ----
-# Shared logic with _probe_mid_session_add — kept inline to avoid coupling
-# the two probes. Diverge if either probe's requirements drift.
+# The ordering assertion in the verifier doesn't care whether the picked
+# accessor's class is emitted by the project's UCkAssetRegistryConfig — it
+# only needs SOME assets::X() that fails to resolve. _BP / _BP_C suffixes
+# are skipped because Blueprint parent-class resolution defeats Tier 1/2 AR
+# stub synthesis (hits the Tier 3 refusal correctly — that's a different
+# code path, not the one we're testing).
 $pickedAsset = $null
 $arFiles = Get-ChildItem -Path $genDir -Filter '*Assets.as' -File -ErrorAction SilentlyContinue
 if ($arFiles) {
@@ -95,16 +76,6 @@ if ($arFiles) {
             }
         }
     }
-    # Bias the picker to known-included asset classes. The AR generator's
-    # include filter is NOT identity-based on file extension, but BB-style
-    # canonicals reliably contain `_SM` (StaticMesh), `_T` (Texture2D), and
-    # `_Cue` (SoundCue) accessors — picking from these ensures the
-    # regenerated canonical absorbs the synthesized stub. Skeletons (`_SKEL`),
-    # animations (`_AS` / `_Anim`), and other less-common classes may be
-    # excluded by the project's UCkAssetRegistryConfig and would defeat the
-    # loop-converge assertion (the canonical never absorbs the accessor, so
-    # the dispatcher keeps re-synthesizing the stub even on a fixed dispatcher).
-    $supportedSuffixRegex = '_(SM|T|M|MI|MIC|MF|Cue|SND_Cue|BB_SM|BB_T|BB_M)$'
     foreach ($d in $scanDirs) {
         $files = Get-ChildItem -Path $d -Recurse -Filter '*.uasset' -ErrorAction SilentlyContinue | Select-Object -First 5000
         foreach ($u in $files) {
@@ -112,7 +83,6 @@ if ($arFiles) {
             if ($stem -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { continue }
             if ($existing.ContainsKey($stem)) { continue }
             if ($stem -match '_BP$|_BP_C$') { continue }
-            if ($stem -notmatch $supportedSuffixRegex) { continue }
             $pickedAsset = $stem
             break
         }
@@ -121,21 +91,13 @@ if ($arFiles) {
 }
 
 if (-not $pickedAsset) {
-    Write-Error "Probe C requires an unaccessed asset under a /Game/<X>/ discovery root, but none was found. Either this project has no AR configs, or every discovered asset already has an accessor in *Assets.as. Probe cannot trigger the AssetRegistry path without a target."
+    Write-Error "Probe C requires an unaccessed asset under a /Game/<X>/ discovery root, but none was found. Either this project has no AR configs, or every discovered asset already has an accessor in *Assets.as."
     exit 1
 }
 
 # ---- Build AS body — AR strategy ONLY ----
-# A single-strategy probe makes the loop-detection assertions in the verifier
-# unambiguous. With multi-strategy (the mid_session_add probe), interleaved
-# DH/ESP recovery events would dilute the AR-specific timeline.
-#
-# We wrap the assets::X() call inside an entity script method to guarantee
-# AS compiles it (UClass reflection emits all methods of registered classes,
-# unlike namespace-scoped free functions where dead-strip behavior is harder
-# to reason about). The class itself has no ExposeOnSpawn properties — no
-# Params() call → no EntitySpawnParams strategy triggered. No handle field →
-# no DynamicHandle strategy. Only AR.
+# Class has no ExposeOnSpawn (no ESP stub), no handle field (no DH stub).
+# Body wraps assets::X() in a UClass method so AS reliably compiles it.
 $probeStamp = (Get-Date -Format 'yyMMddHHmmss')
 $className = "UCk_ProbeAssetRegistryLoop${probeStamp}_EntityScript"
 
