@@ -95,6 +95,16 @@ if ($arFiles) {
             }
         }
     }
+    # Bias the picker to known-included asset classes. The AR generator's
+    # include filter is NOT identity-based on file extension, but BB-style
+    # canonicals reliably contain `_SM` (StaticMesh), `_T` (Texture2D), and
+    # `_Cue` (SoundCue) accessors — picking from these ensures the
+    # regenerated canonical absorbs the synthesized stub. Skeletons (`_SKEL`),
+    # animations (`_AS` / `_Anim`), and other less-common classes may be
+    # excluded by the project's UCkAssetRegistryConfig and would defeat the
+    # loop-converge assertion (the canonical never absorbs the accessor, so
+    # the dispatcher keeps re-synthesizing the stub even on a fixed dispatcher).
+    $supportedSuffixRegex = '_(SM|T|M|MI|MIC|MF|Cue|SND_Cue|BB_SM|BB_T|BB_M)$'
     foreach ($d in $scanDirs) {
         $files = Get-ChildItem -Path $d -Recurse -Filter '*.uasset' -ErrorAction SilentlyContinue | Select-Object -First 5000
         foreach ($u in $files) {
@@ -102,6 +112,7 @@ if ($arFiles) {
             if ($stem -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { continue }
             if ($existing.ContainsKey($stem)) { continue }
             if ($stem -match '_BP$|_BP_C$') { continue }
+            if ($stem -notmatch $supportedSuffixRegex) { continue }
             $pickedAsset = $stem
             break
         }
