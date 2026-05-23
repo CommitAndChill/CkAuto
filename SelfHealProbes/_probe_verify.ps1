@@ -29,6 +29,12 @@
                             (strips `_Class` for disk lookup, emits a
                             TSubclassOf<X> stub that compiles). See the
                             Probe D row in README.md.
+      wbp_class_synth     — verifies the Tier 2.5 AssetData
+                            NativeParentClass tag fallback resolves WBP
+                            `_Class` accessors whose ParentClass is an
+                            AS-defined UClass (LoadObject can't construct
+                            those at modal-tick). See the Probe E row in
+                            README.md.
 
 .PARAMETER LogPath
     Optional explicit log path. If omitted, the newest
@@ -49,7 +55,7 @@
 #>
 Param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('merge_conflict', 'mid_session_add', 'tier3', 'assetregistry_loop', 'blockingload_class_synth')]
+    [ValidateSet('merge_conflict', 'mid_session_add', 'tier3', 'assetregistry_loop', 'blockingload_class_synth', 'wbp_class_synth')]
     [string]$Probe,
 
     [string]$LogPath,
@@ -225,6 +231,38 @@ elseif ($Probe -eq 'blockingload_class_synth') {
 
     # Phase 4 regression check (below) asserts the RED signature is ABSENT.
 }
+elseif ($Probe -eq 'wbp_class_synth') {
+    # Probe E - pins that `assets::<X>_WBP_Class()` resolves via the Tier 2.5
+    # AssetData NativeParentClass tag path when LoadObject can't construct the
+    # WBP (e.g. AS-defined parent class isn't registered yet). Positive: the
+    # dispatcher's "Synthesized AssetRegistry stub" success line. RED-absence
+    # (Phase 6 below) asserts the pre-fix "Could not resolve UClass" message
+    # is absent.
+    $sidecarPath = Join-Path $projectRoot 'Script\_probe_wbp_class_synth.targets.json'
+    if (-not (Test-Path $sidecarPath)) {
+        Write-Error "Sidecar not found: $sidecarPath. Run _probe_wbp_class_synth.bat first."
+        exit 2
+    }
+    $sc = Get-Content $sidecarPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host "Sidecar: assets::$($sc.AccessorName)_Class() -> TSoftClassPtr<$($sc.AssetClassName)>" -ForegroundColor DarkCyan
+    Write-Host ''
+
+    $accessorEsc = [regex]::Escape($sc.AccessorName)
+
+    # GREEN: dispatcher success log. Format (from Dispatcher.cpp ~341):
+    #   `[SelfHeal] Synthesized AssetRegistry stub for assets::<Name>_Class()`
+    # The bare-class return-type token in the log varies (the dispatcher
+    # prints ResolvedAssetClass, which is the native parent name like
+    # `UUserWidget`), so the match key is the namespace+accessor pair — that
+    # alone proves the synth path completed (which it couldn't before this
+    # fix because ClassName was empty and the path bailed at the Tier 3
+    # refusal banner).
+    $events += New-Event "Synthesized AssetRegistry stub for assets::$($sc.AccessorName)_Class()" `
+                        "Synthesized AssetRegistry stub for assets::${accessorEsc}_Class\(\)" `
+                        -Anywhere
+
+    # Phase 6 regression check (below) asserts the RED signature is ABSENT.
+}
 elseif ($Probe -eq 'tier3') {
     # Tier 3 refusal probe — fixed events (no sidecar; the probe injects a
     # fake asset name that's the same every run).
@@ -363,14 +401,44 @@ if ($Probe -eq 'blockingload_class_synth') {
     }
 }
 
+# Phase 6: wbp_class_synth - assert the RED signature is ABSENT.
+# Pre-fix failure line literally embeds the LoadObject + Tier 3 disabled
+# wording when ClassName comes back empty from both resolution paths. Its
+# presence proves the Tier 2.5 AssetData NativeParentClass tag fallback
+# didn't run (or didn't resolve).
+$wbpAssertionPassed = $true
+if ($Probe -eq 'wbp_class_synth') {
+    $sidecarPath = Join-Path $projectRoot 'Script\_probe_wbp_class_synth.targets.json'
+    if (Test-Path $sidecarPath) {
+        $sc = Get-Content $sidecarPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $accessorEsc = [regex]::Escape($sc.AccessorName)
+        # Pre-fix message text was 'Could not resolve UClass via LoadObject for
+        # '<X>_Class' ...'. Post-fix message says 'via either LoadObject (Tier
+        # 2) or AssetData NativeParentClass tag (Tier 2.5)'. The accessor name
+        # in the message scopes the assertion to this probe's target.
+        $redRegex = [regex]("Could not resolve UClass.*for '" + $accessorEsc + "_Class'")
+        $finalLines = Get-Content -LiteralPath $LogPath -Encoding UTF8
+        $redHits = ($finalLines | Where-Object { $redRegex.IsMatch($_) }).Count
+
+        Write-Host ""
+        if ($redHits -eq 0) {
+            Write-Host ("[PASS] WBP-CHECK - no `Could not resolve UClass ... for '$($sc.AccessorName)_Class'` line in log; Tier 2.5 AssetData tag fallback resolved the native parent.") -ForegroundColor Green
+        } else {
+            Write-Host ("[FAIL] WBP-CHECK - found $redHits occurrence(s) of the resolution-failure signature for '$($sc.AccessorName)_Class'. The Tier 2.5 AssetData NativeParentClass tag fallback didn't fire or didn't resolve. Either the fix isn't built into the running editor, or the WBP's tag chain doesn't expose a native parent.") -ForegroundColor Red
+            $wbpAssertionPassed = $false
+        }
+    }
+}
+
 Write-Host ''
 $total = $events.Count
 $allPositiveMatched = ($passes -eq $total)
-$auxPassed = $loopAssertionPassed -and $flavorAssertionPassed
+$auxPassed = $loopAssertionPassed -and $flavorAssertionPassed -and $wbpAssertionPassed
 if ($allPositiveMatched -and $auxPassed) {
     $suffix = ''
     if ($Probe -eq 'assetregistry_loop')          { $suffix = ' + loop-check passed' }
     elseif ($Probe -eq 'blockingload_class_synth') { $suffix = ' + flavor-check passed' }
+    elseif ($Probe -eq 'wbp_class_synth')          { $suffix = ' + wbp-check passed' }
     Write-Host ("VERDICT: $passes of $total events matched$suffix. PROBE PASSED.") -ForegroundColor Green
     exit 0
 }
@@ -378,6 +446,7 @@ else {
     $suffix = ''
     if ($Probe -eq 'assetregistry_loop' -and -not $loopAssertionPassed)       { $suffix = ' BUT loop-check FAILED' }
     elseif ($Probe -eq 'blockingload_class_synth' -and -not $flavorAssertionPassed) { $suffix = ' BUT flavor-check FAILED' }
+    elseif ($Probe -eq 'wbp_class_synth' -and -not $wbpAssertionPassed)              { $suffix = ' BUT wbp-check FAILED' }
     Write-Host ("VERDICT: $passes of $total events matched$suffix. PROBE FAILED.") -ForegroundColor Red
     exit 1
 }
