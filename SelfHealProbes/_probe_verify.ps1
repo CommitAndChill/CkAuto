@@ -222,11 +222,13 @@ elseif ($Probe -eq 'blockingload_class_synth') {
     $assetTypeEsc = [regex]::Escape($sc.AssetClassName)
 
     # GREEN signature: the synthesizer stripped `_Class` for disk lookup
-    # (resolved asset path has NO `_Class` literal in it), resolved a real
-    # UClass, and emitted a TSubclassOf<X> blocking stub. Anywhere-search;
-    # the line lands once per cycle the dispatcher fires.
-    $events += New-Event "Synthesized AssetRegistry stub for $($sc.Namespace)::$($sc.AccessorName)_Class() with TSubclassOf<$($sc.AssetClassName)> return shape" `
-                        "Synthesized AssetRegistry stub for ${nsEsc}::${accessorEsc}_Class\(\) \(return type TSubclassOf<$assetTypeEsc>" `
+    # (resolved asset path has NO `_Class` literal in it), resolved the BP's
+    # native parent UClass, and emitted a TSubclassOf<X> stub body. The log
+    # line reports the resolved class as a bare identifier (no TSubclassOf<>
+    # wrapper — that lives in the emitted stub body, not the log message).
+    # Anywhere-search; the line lands once per cycle the dispatcher fires.
+    $events += New-Event "Synthesized AssetRegistry stub for $($sc.Namespace)::$($sc.AccessorName)_Class() (return type $($sc.AssetClassName))" `
+                        "Synthesized AssetRegistry stub for ${nsEsc}::${accessorEsc}_Class\(\) \(return type $assetTypeEsc" `
                         -Anywhere
 
     # Phase 4 regression check (below) asserts the RED signature is ABSENT.
