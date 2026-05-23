@@ -26,6 +26,7 @@ PASS/FAIL.
 | `_probe_mid_session_add.{bat,_restore.bat}` | Mid-session, FTSTicker drain | A new `.as` file referencing up to three unresolved symbols dropped at runtime; mid-session ticker fires strategies across multiple cycles as hot-reload retries surface each error. |
 | `_probe_tier3_{corrupt.bat,restore.bat}` | Tier 3 refusal validation | Calls a deliberately-fake asset accessor. Validates the post-2026-05-13 dispatcher behavior: Tier 1/2 fail → Tier 3 refuses → actionable banner surfaces instead of editor wedging on a parser-blind derivative error. |
 | `_probe_assetregistry_loop.{bat,_restore.bat}` | Mid-session, AR-only — loop-detection | Drops an AS class that calls exactly ONE unresolved `assets::X()`. Positive: AR stub synth + AR regen-completed each fire ≥1 time. **Negative (the bug pin)**: after the first `Asset Registry generation completed` line, ZERO further `OnReloadHadErrors fired (mid-session mode, cycle N of 3)` lines may appear — pins the post-2026-05-21 PostCompile-ordering bug (Delete_AllStubRecoveryFiles runs sync before the deferred AR regen ticker has rewritten canonical → hot-reload re-fires → loop). |
+| `_probe_blockingload_class_synth.{bat,_restore.bat}` | Mid-session, AR-only — BlockingLoadClass flavor | Picks an existing BP-class blocking-load accessor pair from a canonical `*Assets.as`, snapshots the file, then deletes both the soft (`TSoftClassPtr<X> Name_Class()`) and blocking (`TSubclassOf<X> Name_Class()` body) declarations. Drops an AS file referencing `assets::load::<Target>_Class()`. **Positive**: dispatcher emits `Synthesized AssetRegistry stub for assets::load::<Target>_Class() (return type TSubclassOf<X>, asset /…/<Target>.<Target>)` (no `_Class` literal in the resolved asset path). **Negative (the bug pin, RED signature)**: ZERO `Asset '<Target>_Class.uasset' not found under disk-converted root` lines — pins the pre-fix classifier ordering bug where `::load` short-circuited the `_Class` check, causing the disk walk to search for `<Target>_Class.uasset` literally. |
 
 ## Runtime discovery
 
@@ -62,6 +63,12 @@ CkAuto\SelfHealProbes\_probe_tier3_corrupt.bat
 :: launch editor, observe the refusal banner + Slate toast
 pwsh CkAuto\SelfHealProbes\_probe_verify.ps1 tier3
 CkAuto\SelfHealProbes\_probe_tier3_restore.bat
+
+:: Probe D (BlockingLoadClass flavor) — editor MUST be running
+CkAuto\SelfHealProbes\_probe_blockingload_class_synth.bat
+:: hot-reload fails → mid-session ticker fires the AR strategy with the new flavor
+pwsh CkAuto\SelfHealProbes\_probe_verify.ps1 blockingload_class_synth -Tail
+CkAuto\SelfHealProbes\_probe_blockingload_class_synth_restore.bat
 ```
 
 The verifier accepts:
@@ -204,6 +211,7 @@ have eyes-on the editor window:
   | mid_session_add | MUST be running (probe only warns, doesn't refuse) |
   | tier3 | MUST be closed (probe refuses; cold-start triggers the recovery path) |
   | assetregistry_loop | MUST be running (probe only warns, doesn't refuse) |
+  | blockingload_class_synth | MUST be running (probe only warns, doesn't refuse) |
 - **Settle window**: after launching the editor for merge_conflict or
   tier3, wait until the editor's main viewport is visible — typically
   30–90s on a warm DDC, longer on first-build or shader compile. The

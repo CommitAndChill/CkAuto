@@ -24,6 +24,11 @@
                             regen ticker rewrites the canonical (post-fix)
                             rather than BEFORE (pre-fix). See the Probe C
                             row in README.md.
+      blockingload_class_synth — verifies the synthesizer classifies
+                            `assets::load::<X>_Class()` as BlockingLoadClass
+                            (strips `_Class` for disk lookup, emits a
+                            TSubclassOf<X> stub that compiles). See the
+                            Probe D row in README.md.
 
 .PARAMETER LogPath
     Optional explicit log path. If omitted, the newest
@@ -44,7 +49,7 @@
 #>
 Param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('merge_conflict', 'mid_session_add', 'tier3', 'assetregistry_loop')]
+    [ValidateSet('merge_conflict', 'mid_session_add', 'tier3', 'assetregistry_loop', 'blockingload_class_synth')]
     [string]$Probe,
 
     [string]$LogPath,
@@ -192,6 +197,34 @@ elseif ($Probe -eq 'assetregistry_loop') {
     $events += New-Event 'Asset Registry generation completed' `
                         'Asset Registry generation completed: \d+ succeeded, \d+ failed' -Anywhere
 }
+elseif ($Probe -eq 'blockingload_class_synth') {
+    # Probe D - pins that `assets::load::<X>_Class()` flavor synth produces a
+    # compilable stub (not the pre-fix `Asset '<X>_Class.uasset' not found`
+    # refusal). Pure positive verification: the dispatcher line that proves
+    # the new BlockingLoadClass flavor classifier+strip+emit path ran.
+    $sidecarPath = Join-Path $projectRoot 'Script\_probe_blockingload_class_synth.targets.json'
+    if (-not (Test-Path $sidecarPath)) {
+        Write-Error "Sidecar not found: $sidecarPath. Run _probe_blockingload_class_synth.bat first."
+        exit 2
+    }
+    $sc = Get-Content $sidecarPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Write-Host "Sidecar: $($sc.Namespace)::$($sc.AccessorName)_Class() -> TSubclassOf<$($sc.AssetClassName)>" -ForegroundColor DarkCyan
+    Write-Host ''
+
+    $accessorEsc  = [regex]::Escape($sc.AccessorName)
+    $nsEsc        = [regex]::Escape($sc.Namespace)
+    $assetTypeEsc = [regex]::Escape($sc.AssetClassName)
+
+    # GREEN signature: the synthesizer stripped `_Class` for disk lookup
+    # (resolved asset path has NO `_Class` literal in it), resolved a real
+    # UClass, and emitted a TSubclassOf<X> blocking stub. Anywhere-search;
+    # the line lands once per cycle the dispatcher fires.
+    $events += New-Event "Synthesized AssetRegistry stub for $($sc.Namespace)::$($sc.AccessorName)_Class() with TSubclassOf<$($sc.AssetClassName)> return shape" `
+                        "Synthesized AssetRegistry stub for ${nsEsc}::${accessorEsc}_Class\(\) \(return type TSubclassOf<$assetTypeEsc>" `
+                        -Anywhere
+
+    # Phase 4 regression check (below) asserts the RED signature is ABSENT.
+}
 elseif ($Probe -eq 'tier3') {
     # Tier 3 refusal probe — fixed events (no sidecar; the probe injects a
     # fake asset name that's the same every run).
@@ -305,14 +338,46 @@ if ($Probe -eq 'assetregistry_loop') {
     }
 }
 
+# Phase 5: blockingload_class_synth - assert the RED signature is ABSENT.
+# The dispatcher's pre-fix failure line literally embeds `<Target>_Class.uasset`
+# in the error (because the unstripped function name became the disk-search
+# stem). Its presence anywhere in the log proves the BlockingLoadClass
+# classifier+strip path didn't run.
+$flavorAssertionPassed = $true
+if ($Probe -eq 'blockingload_class_synth') {
+    $sidecarPath = Join-Path $projectRoot 'Script\_probe_blockingload_class_synth.targets.json'
+    if (Test-Path $sidecarPath) {
+        $sc = Get-Content $sidecarPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $accessorEsc = [regex]::Escape($sc.AccessorName)
+        $redRegex = [regex]("Asset '" + $accessorEsc + "_Class\.uasset' not found under disk-converted root")
+        $finalLines = Get-Content -LiteralPath $LogPath -Encoding UTF8
+        $redHits = ($finalLines | Where-Object { $redRegex.IsMatch($_) }).Count
+
+        Write-Host ""
+        if ($redHits -eq 0) {
+            Write-Host ("[PASS] FLAVOR-CHECK - no `Asset '$($sc.AccessorName)_Class.uasset' not found` line in log; BlockingLoadClass strip path ran.") -ForegroundColor Green
+        } else {
+            Write-Host ("[FAIL] FLAVOR-CHECK - found $redHits occurrence(s) of the pre-fix `Asset '$($sc.AccessorName)_Class.uasset' not found` signature. The synthesizer is NOT classifying `$($sc.Namespace)::$($sc.AccessorName)_Class()` as BlockingLoadClass; `_Class` was not stripped before disk lookup.") -ForegroundColor Red
+            $flavorAssertionPassed = $false
+        }
+    }
+}
+
 Write-Host ''
 $total = $events.Count
 $allPositiveMatched = ($passes -eq $total)
-if ($allPositiveMatched -and $loopAssertionPassed) {
-    Write-Host ("VERDICT: $passes of $total events matched$(if ($Probe -eq 'assetregistry_loop') { ' + loop-check passed' } else { '' }). PROBE PASSED.") -ForegroundColor Green
+$auxPassed = $loopAssertionPassed -and $flavorAssertionPassed
+if ($allPositiveMatched -and $auxPassed) {
+    $suffix = ''
+    if ($Probe -eq 'assetregistry_loop')          { $suffix = ' + loop-check passed' }
+    elseif ($Probe -eq 'blockingload_class_synth') { $suffix = ' + flavor-check passed' }
+    Write-Host ("VERDICT: $passes of $total events matched$suffix. PROBE PASSED.") -ForegroundColor Green
     exit 0
 }
 else {
-    Write-Host ("VERDICT: $passes of $total events matched$(if ($Probe -eq 'assetregistry_loop' -and -not $loopAssertionPassed) { ' BUT loop-check FAILED' } else { '' }). PROBE FAILED.") -ForegroundColor Red
+    $suffix = ''
+    if ($Probe -eq 'assetregistry_loop' -and -not $loopAssertionPassed)       { $suffix = ' BUT loop-check FAILED' }
+    elseif ($Probe -eq 'blockingload_class_synth' -and -not $flavorAssertionPassed) { $suffix = ' BUT flavor-check FAILED' }
+    Write-Host ("VERDICT: $passes of $total events matched$suffix. PROBE FAILED.") -ForegroundColor Red
     exit 1
 }
