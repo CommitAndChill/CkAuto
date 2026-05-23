@@ -3,18 +3,9 @@
 .SYNOPSIS
     Probe D — repros the `assets::load::<X>_Class()` synth misclassification.
 
-    Picks a BP-class blocking-load accessor pair from a canonical
-    `Script/Generated/*Assets.as` file, snapshots the file, then hand-edits
-    the canonical to delete just the `_Class` accessor pair for the target.
-    Drops a probe `.as` referencing `assets::load::<Target>_Class()` as the
-    sole trigger.
-
-    Editor MUST be running (mid-session ticker is the only entry point that
-    will pick up the new probe `.as` and fail the compile). Pairs with
-    `_probe_verify.ps1 blockingload_class_synth`.
-
-    Restore via `_probe_blockingload_class_synth_restore.bat` puts the
-    canonical back from the sidecar's base64 snapshot.
+    Editor MUST be running (only the mid-session ticker picks up the new
+    probe `.as`). Pairs with `_probe_verify.ps1 blockingload_class_synth`;
+    restore via `_probe_blockingload_class_synth_restore.bat`.
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -52,14 +43,7 @@ if (-not $editorRunning) {
 }
 
 # ---- Pick a BP-class blocking-load accessor target ----
-# Need:
-#   1. A `TSubclassOf<X> <NAME>_Class()` block in a canonical *Assets.as inside
-#      a `namespace assets::load {...}` (or plugin-scoped equivalent) block.
-#   2. The matching `<NAME>.uasset` exists on disk under the file's
-#      `// Discovery root:` header.
-# Skip patterns:
-#   - WBP-class accessors (Tier 2 LoadObject failure - a different bug;
-#     would muddy the probe's signal).
+# Skip WBP-class accessors — different Tier-2 bug, would muddy the signal.
 $pickedAccessor   = $null
 $pickedNamespace  = $null
 $pickedAssetClass = $null

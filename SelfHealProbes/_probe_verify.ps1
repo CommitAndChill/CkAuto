@@ -204,10 +204,9 @@ elseif ($Probe -eq 'assetregistry_loop') {
                         'Asset Registry generation completed: \d+ succeeded, \d+ failed' -Anywhere
 }
 elseif ($Probe -eq 'blockingload_class_synth') {
-    # Probe D - pins that `assets::load::<X>_Class()` flavor synth produces a
-    # compilable stub (not the pre-fix `Asset '<X>_Class.uasset' not found`
-    # refusal). Pure positive verification: the dispatcher line that proves
-    # the new BlockingLoadClass flavor classifier+strip+emit path ran.
+    # Probe D — pins that `assets::load::<X>_Class()` synth emits a compilable
+    # stub. Phase 5 below asserts the pre-fix `_Class.uasset not found` line is
+    # absent.
     $sidecarPath = Join-Path $projectRoot 'Script\_probe_blockingload_class_synth.targets.json'
     if (-not (Test-Path $sidecarPath)) {
         Write-Error "Sidecar not found: $sidecarPath. Run _probe_blockingload_class_synth.bat first."
@@ -221,17 +220,12 @@ elseif ($Probe -eq 'blockingload_class_synth') {
     $nsEsc        = [regex]::Escape($sc.Namespace)
     $assetTypeEsc = [regex]::Escape($sc.AssetClassName)
 
-    # GREEN signature: the synthesizer stripped `_Class` for disk lookup
-    # (resolved asset path has NO `_Class` literal in it), resolved the BP's
-    # native parent UClass, and emitted a TSubclassOf<X> stub body. The log
-    # line reports the resolved class as a bare identifier (no TSubclassOf<>
-    # wrapper — that lives in the emitted stub body, not the log message).
-    # Anywhere-search; the line lands once per cycle the dispatcher fires.
+    # GREEN log line reports the resolved class as a BARE identifier — the
+    # TSubclassOf<> wrapper lives in the emitted stub body, not the log
+    # message. Anywhere-search.
     $events += New-Event "Synthesized AssetRegistry stub for $($sc.Namespace)::$($sc.AccessorName)_Class() (return type $($sc.AssetClassName))" `
                         "Synthesized AssetRegistry stub for ${nsEsc}::${accessorEsc}_Class\(\) \(return type $assetTypeEsc" `
                         -Anywhere
-
-    # Phase 4 regression check (below) asserts the RED signature is ABSENT.
 }
 elseif ($Probe -eq 'wbp_class_synth') {
     # Probe E - pins that `assets::<X>_WBP_Class()` resolves via the Tier 2.5
@@ -378,11 +372,9 @@ if ($Probe -eq 'assetregistry_loop') {
     }
 }
 
-# Phase 5: blockingload_class_synth - assert the RED signature is ABSENT.
-# The dispatcher's pre-fix failure line literally embeds `<Target>_Class.uasset`
-# in the error (because the unstripped function name became the disk-search
-# stem). Its presence anywhere in the log proves the BlockingLoadClass
-# classifier+strip path didn't run.
+# Phase 5: blockingload_class_synth — RED signature is the literal
+# `<Target>_Class.uasset' not found` (unstripped function name as disk-stem).
+# Its presence proves the classifier+strip path didn't run.
 $flavorAssertionPassed = $true
 if ($Probe -eq 'blockingload_class_synth') {
     $sidecarPath = Join-Path $projectRoot 'Script\_probe_blockingload_class_synth.targets.json'
