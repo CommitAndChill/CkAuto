@@ -165,7 +165,9 @@ $softLineRe = [regex]("(?m)^\s*TSoftClassPtr<\w+>\s+" + [regex]::Escape($pickedA
 #   `        { return nullptr; }`
 #   `        return System::LoadClassAsset_Blocking(<soft>::Name_Class());`
 #   `    }`
-$blockingBlockRe = [regex]("(?ms)^\s*TSubclassOf<\w+>\s+" + [regex]::Escape($pickedAccessor) + "_Class\s*\(\s*\)\s*\r?\n\s*\{.+?LoadClassAsset_Blocking\([^)]+\)\s*;\s*\r?\n\s*\}\s*\r?\n")
+# Inner LoadClassAsset_Blocking arg contains `)` (the soft accessor call), so
+# anchor the inner match on `;` rather than `)` to avoid stopping early.
+$blockingBlockRe = [regex]("(?ms)^\s*TSubclassOf<\w+>\s+" + [regex]::Escape($pickedAccessor) + "_Class\s*\(\s*\)\s*\r?\n\s*\{.+?LoadClassAsset_Blocking\(.+?\)\s*;\s*\r?\n\s*\}\s*\r?\n")
 
 $newText = $softLineRe.Replace($origText, '', 1)
 if ($newText -eq $origText) {
