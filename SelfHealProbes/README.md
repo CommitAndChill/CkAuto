@@ -27,6 +27,7 @@ PASS/FAIL.
 | `_probe_tier3_{corrupt.bat,restore.bat}` | Tier 3 refusal validation | Calls a deliberately-fake asset accessor. Validates the post-2026-05-13 dispatcher behavior: Tier 1/2 fail → Tier 3 refuses → actionable banner surfaces instead of editor wedging on a parser-blind derivative error. |
 | `_probe_assetregistry_loop.{bat,_restore.bat}` | Mid-session, AR-only — loop-detection | Drops an AS class that calls exactly ONE unresolved `assets::X()`. Positive: AR stub synth + AR regen-completed each fire ≥1 time. **Negative (the bug pin)**: after the first `Asset Registry generation completed` line, ZERO further `OnReloadHadErrors fired (mid-session mode, cycle N of 3)` lines may appear — pins the post-2026-05-21 PostCompile-ordering bug (Delete_AllStubRecoveryFiles runs sync before the deferred AR regen ticker has rewritten canonical → hot-reload re-fires → loop). |
 | `_probe_blockingload_class_synth.{bat,_restore.bat}` | Mid-session, AR-only — BlockingLoadClass flavor | Picks an existing BP-class blocking-load accessor pair from a canonical `*Assets.as`, snapshots the file, then deletes both the soft (`TSoftClassPtr<X> Name_Class()`) and blocking (`TSubclassOf<X> Name_Class()` body) declarations. Drops an AS file referencing `assets::load::<Target>_Class()`. **Positive**: dispatcher emits `Synthesized AssetRegistry stub for assets::load::<Target>_Class() (return type TSubclassOf<X>, asset /…/<Target>.<Target>)` (no `_Class` literal in the resolved asset path). **Negative (the bug pin, RED signature)**: ZERO `Asset '<Target>_Class.uasset' not found under disk-converted root` lines — pins the pre-fix classifier ordering bug where `::load` short-circuited the `_Class` check, causing the disk walk to search for `<Target>_Class.uasset` literally. |
+| `_probe_wbp_class_synth.{bat,_restore.bat}` | Mid-session, AR-only — Tier 2.5 AssetData tag | Picks a WBP soft-class accessor (`TSoftClassPtr<X> <Name>_WBP_Class()`, namespace `assets`) from a canonical `*Assets.as`, snapshots the file, deletes the soft (and matching blocking sibling if present), and drops an AS file referencing `assets::<Target>_WBP_Class()`. Picker excludes signatures already convergence-blacklisted in the current session's log. **Positive**: dispatcher emits `Synthesized AssetRegistry stub for assets::<Target>_WBP_Class()` (Tier 2.5 AssetData NativeParentClass tag fallback resolved the native parent that LoadObject couldn't construct). **Negative (the bug pin, RED signature)**: ZERO `Could not resolve UClass ... for '<Target>_Class'` lines — pins the pre-fix Tier 2 LoadObject blind spot for WBPs whose ParentClass is an AS-defined UClass (`Bb_LootableInventory_PanelWidget` was the live BB symptom). |
 
 ## Runtime discovery
 
@@ -69,6 +70,12 @@ CkAuto\SelfHealProbes\_probe_blockingload_class_synth.bat
 :: hot-reload fails → mid-session ticker fires the AR strategy with the new flavor
 pwsh CkAuto\SelfHealProbes\_probe_verify.ps1 blockingload_class_synth -Tail
 CkAuto\SelfHealProbes\_probe_blockingload_class_synth_restore.bat
+
+:: Probe E (WBP _Class Tier 2.5) — editor MUST be running
+CkAuto\SelfHealProbes\_probe_wbp_class_synth.bat
+:: hot-reload fails → AssetData NativeParentClass tag fallback fires
+pwsh CkAuto\SelfHealProbes\_probe_verify.ps1 wbp_class_synth -Tail
+CkAuto\SelfHealProbes\_probe_wbp_class_synth_restore.bat
 ```
 
 The verifier accepts:
@@ -212,6 +219,7 @@ have eyes-on the editor window:
   | tier3 | MUST be closed (probe refuses; cold-start triggers the recovery path) |
   | assetregistry_loop | MUST be running (probe only warns, doesn't refuse) |
   | blockingload_class_synth | MUST be running (probe only warns, doesn't refuse) |
+  | wbp_class_synth | MUST be running (probe only warns, doesn't refuse). If the target signature is already convergence-blacklisted from earlier in the session, the picker auto-excludes it; if NO unblacklisted candidates remain, restart the editor first. |
 - **Settle window**: after launching the editor for merge_conflict or
   tier3, wait until the editor's main viewport is visible — typically
   30–90s on a warm DDC, longer on first-build or shader compile. The
