@@ -6,29 +6,36 @@ REM Auto-discovers the project (any *.uproject one directory up from this
 REM script) and derives the editor binary as <ProjectName>Editor-Cmd.exe.
 REM
 REM Usage:
-REM   RunGauntlet_Editor.bat <ControllerName> [<Map>]
+REM   RunGauntlet_Editor.bat <ControllerName> [<AsTestClass>] [<Map>]
 REM
 REM Args:
 REM   ControllerName  Name of the in-game UGauntletTestController subclass to
 REM                   instantiate (passed as -gauntlet=<name>). Required.
-REM   Map             Optional /Game/... path. If omitted, the engine loads
-REM                   GameDefaultMap from DefaultEngine.ini.
+REM                   For AS-authored tests, use "Ck_GauntletAsBridgeController".
+REM   AsTestClass     Optional. AS-defined UCk_GauntletAsTest_Base subclass name
+REM                   (with or without the U prefix). Passed as -asgauntlet=<n>.
+REM                   Only meaningful when ControllerName is the bridge.
+REM   Map             Optional. /Game/... map path. If omitted, the engine
+REM                   loads GameDefaultMap from DefaultEngine.ini.
 REM
 REM Exit code reflects the controller's EndTest(N) result.
 
 setlocal
 
 if "%~1"=="" (
-    echo Usage: %~n0 ^<ControllerName^> [^<Map^>]
+    echo Usage: %~n0 ^<ControllerName^> [^<AsTestClass^>] [^<Map^>]
     echo.
     echo   ControllerName  UGauntletTestController subclass name without the U prefix
-    echo                   e.g. "MyBootSmokeController"
+    echo                   e.g. "MyBootSmokeController" or "Ck_GauntletAsBridgeController"
+    echo   AsTestClass     Optional. AS UCk_GauntletAsTest_Base subclass name.
+    echo                   Pairs with the bridge controller above.
     echo   Map             Optional. /Game/... map path. Defaults to GameDefaultMap.
     exit /b 2
 )
 
 set "CONTROLLER=%~1"
-set "MAP=%~2"
+set "ASTEST=%~2"
+set "MAP=%~3"
 
 set "PROJECT_DIR=%~dp0.."
 set "UPROJECT="
@@ -51,15 +58,20 @@ if not exist "%EDITOR_CMD%" (
     exit /b 4
 )
 
+set "ASTEST_ARG="
+if defined ASTEST set "ASTEST_ARG=-asgauntlet=%ASTEST%"
+
 echo Project:    %UPROJECT%
 echo Editor:     %EDITOR_CMD%
 echo Controller: %CONTROLLER%
-if defined MAP echo Map:        %MAP%
+if defined ASTEST echo AS Test:    %ASTEST%
+if defined MAP    echo Map:        %MAP%
 
 if defined MAP (
     "%EDITOR_CMD%" "%UPROJECT%" "%MAP%" ^
         -game ^
         -gauntlet=%CONTROLLER% ^
+        %ASTEST_ARG% ^
         -unattended ^
         -nullrhi ^
         -nosound ^
@@ -70,6 +82,7 @@ if defined MAP (
     "%EDITOR_CMD%" "%UPROJECT%" ^
         -game ^
         -gauntlet=%CONTROLLER% ^
+        %ASTEST_ARG% ^
         -unattended ^
         -nullrhi ^
         -nosound ^
