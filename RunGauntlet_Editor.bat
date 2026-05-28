@@ -19,6 +19,13 @@ REM   Map             Optional. /Game/... map path. If omitted, the engine
 REM                   loads GameDefaultMap from DefaultEngine.ini.
 REM
 REM Exit code reflects the controller's EndTest(N) result.
+REM
+REM Tick rate: Gauntlet's UGauntletTestController::OnTick defaults to 1 Hz
+REM (see Engine/Plugins/Experimental/Gauntlet/Source/Gauntlet/Private/GauntletModule.cpp).
+REM That's too slow for AS tests that need to poll per-frame state (input
+REM injection, attribute reads, etc.) — at 1 Hz, an Enhanced Input inject only
+REM lasts one engine frame (~16ms) before the next AS tick can re-inject. We
+REM pass -gauntlet.tickrate=60 to align the controller tick with the engine tick.
 
 setlocal
 
@@ -71,6 +78,7 @@ if defined MAP (
     "%EDITOR_CMD%" "%UPROJECT%" "%MAP%" ^
         -game ^
         -gauntlet=%CONTROLLER% ^
+        -gauntlet.tickrate=60 ^
         %ASTEST_ARG% ^
         -unattended ^
         -nullrhi ^
@@ -82,6 +90,7 @@ if defined MAP (
     "%EDITOR_CMD%" "%UPROJECT%" ^
         -game ^
         -gauntlet=%CONTROLLER% ^
+        -gauntlet.tickrate=60 ^
         %ASTEST_ARG% ^
         -unattended ^
         -nullrhi ^
