@@ -20,12 +20,14 @@ REM                   loads GameDefaultMap from DefaultEngine.ini.
 REM
 REM Exit code reflects the controller's EndTest(N) result.
 REM
-REM Tick rate: Gauntlet's UGauntletTestController::OnTick defaults to 1 Hz
-REM (see Engine/Plugins/Experimental/Gauntlet/Source/Gauntlet/Private/GauntletModule.cpp).
-REM That's too slow for AS tests that need to poll per-frame state (input
-REM injection, attribute reads, etc.) — at 1 Hz, an Enhanced Input inject only
-REM lasts one engine frame (~16ms) before the next AS tick can re-inject. We
-REM pass -gauntlet.tickrate=60 to align the controller tick with the engine tick.
+REM Tick rate: -gauntlet.tickrate is the FTSTicker delay between fires (seconds),
+REM NOT a frequency. The default 1.0 means "fire once per second" — too slow for
+REM AS tests that need to poll per-frame state (Enhanced Input injection lasts a
+REM single engine frame, ~16ms). Pass 0.0167s (~60 Hz) so the AS-bridge OnTick
+REM aligns with the engine tick. The flag is named misleadingly upstream — see
+REM the doc on FTSTicker::AddTicker in
+REM Engine/Source/Runtime/Core/Public/Containers/Ticker.h:
+REM   "InDelay Delay until next fire; 0 means 'next frame'".
 
 setlocal
 
@@ -78,7 +80,7 @@ if defined MAP (
     "%EDITOR_CMD%" "%UPROJECT%" "%MAP%" ^
         -game ^
         -gauntlet=%CONTROLLER% ^
-        -gauntlet.tickrate=60 ^
+        -gauntlet.tickrate=0.0167 ^
         %ASTEST_ARG% ^
         -unattended ^
         -nullrhi ^
@@ -90,7 +92,7 @@ if defined MAP (
     "%EDITOR_CMD%" "%UPROJECT%" ^
         -game ^
         -gauntlet=%CONTROLLER% ^
-        -gauntlet.tickrate=60 ^
+        -gauntlet.tickrate=0.0167 ^
         %ASTEST_ARG% ^
         -unattended ^
         -nullrhi ^
