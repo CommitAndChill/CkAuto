@@ -20,14 +20,11 @@ REM                   loads GameDefaultMap from DefaultEngine.ini.
 REM
 REM Exit code reflects the controller's EndTest(N) result.
 REM
-REM Tick rate: -gauntlet.tickrate is the FTSTicker delay between fires (seconds),
-REM NOT a frequency. The default 1.0 means "fire once per second" — too slow for
-REM AS tests that need to poll per-frame state (Enhanced Input injection lasts a
-REM single engine frame, ~16ms). Pass 0.0167s (~60 Hz) so the AS-bridge OnTick
-REM aligns with the engine tick. The flag is named misleadingly upstream — see
-REM the doc on FTSTicker::AddTicker in
-REM Engine/Source/Runtime/Core/Public/Containers/Ticker.h:
-REM   "InDelay Delay until next fire; 0 means 'next frame'".
+REM Tick rate: -gauntlet.tickrate is the FTSTicker DELAY between fires (seconds),
+REM not a frequency (misleading upstream name — see FTSTicker::AddTicker in
+REM Engine/Source/Runtime/Core/Public/Containers/Ticker.h). Default 1.0 =
+REM once/second, too slow: EI injection lasts one engine frame (~16ms). Pass
+REM 0.0167 (~60Hz) so the AS-bridge OnTick aligns with the engine tick.
 
 setlocal
 
