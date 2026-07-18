@@ -13,9 +13,13 @@ Every CK-family project ships UnrealToolbox at `<project-root>/CkAuto/UnrealTool
 
 The toolbox handles engine resolution, plugin paths, and the UBT / automation invocation. **Do not** try to find UnrealBuildTool, the engine root, or the editor binary yourself — the whole point of the toolbox is that the agent shouldn't pick the wrong engine.
 
+## Default flow: one single-shot invocation
+
+The default is a **single** `--build --test` invocation writing **one** log (`Saved/Logs/BuildTest.log`). This is deliberate: the toolbox pops one LogViewer progress window at build start and reuses it through the test phase, so you watch the **entire** process — build → editor boot → tests — in one continuous window, with the build lines auto-colored as `msbuild` and the editor lines as `unreal` (segmented parsing). Two separate invocations would pop two sequential windows and split the log in two; use the [Separate-logs variant](#separate-logs-variant-two-invocations) below only when you specifically want the two logs apart.
+
 ## Pre-flight: wait if another editor is running
 
-The toolbox spawns its own editor. If a different editor (another Claude session, a manually-opened editor, or a previous toolbox run that didn't shut down cleanly) is already up on the same project, two editors will fight over the same Saved/Intermediate directories and the build will fail in confusing ways. **Always run this check before any toolbox invocation that spawns the editor (Phase 2, Phase 4, single-shot, Gauntlet).**
+The toolbox spawns its own editor. If a different editor (another Claude session, a manually-opened editor, or a previous toolbox run that didn't shut down cleanly) is already up on the same project, two editors will fight over the same Saved/Intermediate directories and the build will fail in confusing ways. **Always run this check once before the single build+test invocation below (and before a Gauntlet run).**
 
 The active editor holds an exclusive write lock on `<session-project-root>/Saved/Logs/<ProjectName>.log` (where `<ProjectName>` matches the `.uproject` filename — e.g. `CkPlugins.log`). Probe the lock:
 
@@ -48,32 +52,9 @@ If the user's request includes a config keyword, use it. Otherwise ask:
 
 If unsure, default to **DebugGame** for code-fix iteration (faster link, debuggable symbols).
 
-### Phase 2: Build
+### Phase 2: Decide what to test
 
-**First run the Pre-flight editor-lock check** (see above) — wait until any concurrent editor is closed before invoking the toolbox.
-
-Run in the **background** — builds take 5-30 minutes for a CK-family editor target. Use a 600000 ms (10 min) timeout, then await the completion notification. **Do not poll the log.**
-
-The project root is the **primary working directory of the current session** — whatever repo Claude Code was launched from. However, if the changed files live in a *different* project (e.g. work was done in a sibling repo like BusterBlock while the session root is CkPlugins), build that project instead. Always `Set-Location` to the project being built explicitly before invoking the toolbox so the relative `./CkAuto/` and `--project=` paths resolve correctly.
-
-```powershell
-Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --build --config=<Configuration> --target=Editor --output=Saved/Logs/Build-Editor.log --project="<session-project-root>"
-```
-
-**Do NOT** pass `--generate` for normal iteration — it forces a project-files regeneration that adds time for no benefit. Use it only when a `*.Build.cs`, `*.uplugin`, or top-level source layout has changed since the previous build.
-
-When the background task completes:
-
-- **Exit 0** → build succeeded. Continue to Phase 3.
-- **Non-zero** → build failed. Find the actual errors with:
-  ```powershell
-  Select-String -Path "Saved\Logs\Build-Editor.log" -Pattern "error C\d+|fatal error|LNK\d+|: error |^Error" | Select-Object -First 40
-  ```
-  Build logs run 50K+ lines — do **not** read the whole file. Report the errors and stop. Do not run tests against a broken build.
-
-### Phase 3: Decide what to test
-
-Determine the test pattern in this order:
+Single-shot needs the test pattern up front (both phases run in one command). Determine it in this order:
 
 1. If the user passed a non-config token (e.g. `/build-test debug Goap`), use it verbatim.
 2. Otherwise infer from your own recent edits: look at which Plugins / Source modules you touched. The substring of the module name is enough — `CkGoap` → `Goap`, `CkInventory` → `Inventory`.
@@ -82,37 +63,48 @@ Determine the test pattern in this order:
 
 **The matcher is forgiving**: case-insensitive substring tokens, any order. `Goap`, `cktests.GOAP`, and `goap.basicplan` all work. You don't need the full dotted test path.
 
-### Phase 4: Run tests
+### Phase 3: Build + test (single-shot)
 
-**First run the Pre-flight editor-lock check** (see above) — wait until any concurrent editor is closed.
+**First run the Pre-flight editor-lock check** (see above) — once, before this invocation.
 
-Background again, same timeout pattern. Same `Set-Location` requirement.
+Run in the **background** — a CK-family editor build is 5-30 minutes. Use a 600000 ms (10 min) timeout, then await the completion notification. **Do not poll the log.**
+
+The project root is the **primary working directory of the current session** — whatever repo Claude Code was launched from. However, if the changed files live in a *different* project (e.g. work was done in a sibling repo like BusterBlock while the session root is CkPlugins), build that project instead. Always `Set-Location` to the project being built explicitly before invoking the toolbox so the relative `./CkAuto/` and `--project=` paths resolve correctly.
 
 ```powershell
-Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --test --test-pattern <Pattern> --output=Saved/Logs/Test-Editor.log --project="<session-project-root>"
+Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --build --config=<Configuration> --target=Editor --test --test-pattern <Pattern> --output=Saved/Logs/BuildTest.log --project="<session-project-root>"
 ```
 
-(Drop `--test-pattern` for the `all` case.)
+(Drop `--test-pattern` for the `all` case.) The test phase only runs if the build succeeded.
 
-### Phase 5: Report
+**Do NOT** pass `--generate` for normal iteration — it forces a project-files regeneration that adds time for no benefit. Use it only when a `*.Build.cs`, `*.uplugin`, or top-level source layout has changed since the previous build.
 
-Read the **summary block** at the end of `Saved/Logs/Test-Editor.log` — it looks like:
+One progress LogViewer window opens at build start and is reused through the test phase (toolbox v1.15+), so the user watches build → editor boot → tests in a single window. Nothing to launch or wire — it's default-on whenever `--output` is set. On a true-headless / no-desktop machine (CI), add `--no-progress-window`.
 
-```
-=== Test summary ===
-Total: 2
-Passed: 2
-Failed: 0
-Skipped: 0
-Duration: 55s
-```
+### Phase 4: Report
 
-- **Exit 0** → green. Report ✅ `N passed` plus the duration.
-- **Non-zero with `Failed > 0`** → real test failures. Pull per-test details:
+Everything is in `Saved/Logs/BuildTest.log` — build output first, then the editor/test output.
+
+- **Build failed** (non-zero exit with no `=== Test summary ===` block) → find the compile/link errors and stop; do not report test results that don't exist:
   ```powershell
-  Select-String -Path "Saved\Logs\Test-Editor.log" -Pattern "TestResult=Failed|FinishTest TestResult=Failed"
+  Select-String -Path "Saved\Logs\BuildTest.log" -Pattern "error C\d+|fatal error|LNK\d+|: error |^Error" | Select-Object -First 40
   ```
-  Each match has the test name + the assertion message from the test author. Report those verbatim — they are the structured failure output.
+  Build logs run 50K+ lines — do **not** read the whole file.
+- **Build succeeded** → read the **summary block** near the end:
+  ```
+  === Test summary ===
+  Total: 2
+  Passed: 2
+  Failed: 0
+  Skipped: 0
+  Duration: 55s
+  ```
+  - **Exit 0** → green. Report ✅ `N passed` plus the duration.
+  - **Non-zero with `Failed > 0`** → real test failures. Pull per-test details:
+    ```powershell
+    Select-String -Path "Saved\Logs\BuildTest.log" -Pattern "TestResult=Failed|FinishTest TestResult=Failed"
+    ```
+    Each match has the test name + the assertion message from the test author. Report those verbatim — they are the structured failure output.
 
 ## Traps to avoid
 
@@ -124,17 +116,17 @@ These bit before and the toolbox docs don't all flag them:
 - **Don't poll background tasks.** You are notified on completion. Polling reads partial flushes and gives misleading state.
 - **Don't time out aggressively.** 5-30 min is normal for a CK editor build. 10 min is the floor; raise it if you've seen this project run longer historically.
 - **Angelscript bindings regenerate on editor startup** — and `--test` spins up the editor — so if your C++ change exposed a new API and your AS callsites use it, the test phase exercising the AS path implicitly verifies the AS regeneration too.
-- **Do not commit `Saved/Logs/Build-Editor.log` or `Saved/Logs/Test-Editor.log`.** They're scratch output. The standard `Saved/` is gitignored at the project root, but double-check if you ever stage selectively.
+- **Do not commit `Saved/Logs/BuildTest.log`** (or the `Build-Editor.log` / `Test-Editor.log` of the separate-logs variant). They're scratch output. The standard `Saved/` is gitignored at the project root, but double-check if you ever stage selectively.
 
 ## Gauntlet variant (process-level tests)
 
-Projects that ship a `GauntletTests.json` at the project root (BusterBlock does) can run process-level Gauntlet tests through the same toolbox (v1.12+). Same pre-flight editor-lock check applies — a Gauntlet run boots the project's editor binary in `-game` mode.
+Projects that ship a `GauntletTests.json` at the project root (BusterBlock does) can run process-level Gauntlet tests through the same toolbox (v1.12+). Same pre-flight editor-lock check applies — a Gauntlet run boots the project's editor binary in `-game` mode. Compose it single-shot with `--build` so build → gauntlet share one window and one log, same as the default flow above.
 
 ```powershell
-Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --gauntlet <TestName|all> --output=Saved/Logs/Gauntlet-Editor.log --project="<session-project-root>"
+Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --build --config=<Configuration> --target=Editor --gauntlet <TestName|all> --output=Saved/Logs/Gauntlet-Editor.log --project="<session-project-root>"
 ```
 
-- Composable with `--build` (build the editor first — closes the stale-binary trap).
+- Drop `--build` to run against the already-built editor.
 - `--gauntlet-repeat N` = flake mode; `--gauntlet-include-xfail` = also run expected-FAIL tests;
   `--gauntlet-map /Game/...` = map override.
 - Each run's FULL editor log is archived under `Saved/Logs/Gauntlet/<timestamp>/<Test>_rN.log`;
@@ -144,16 +136,18 @@ Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --gauntlet <Te
   (NTSTATUS hex)/`INCONCLUSIVE` (exit 0 without the completion line — NOT a pass).
 - Budget ~60-90s per test (fresh editor boot each); `all` on BusterBlock is ~25 min.
 
-## Single-shot variant
+## Separate-logs variant (two invocations)
 
-If config and pattern are already decided, the toolbox supports `--build` and `--test` in one invocation, re-using the editor process between phases (saves ~30 s of editor startup). **Run the Pre-flight editor-lock check first** — same as Phase 2 / Phase 4.
+Use this **only** when you specifically want the build and test output in separate files — e.g. to grep them independently, or to iterate on tests without rebuilding while keeping the build log around. It runs build and test as two separate invocations, each with its own `--output` and its own pre-flight check:
 
 ```powershell
-Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --build --config=DebugGame --target=Editor --test --test-pattern Goap --output=Saved/Logs/BuildTest.log --project="<session-project-root>"
+Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --build --config=<Configuration> --target=Editor --output=Saved/Logs/Build-Editor.log --project="<session-project-root>"
+# then, only if the build succeeded:
+Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --test --test-pattern <Pattern> --output=Saved/Logs/Test-Editor.log --project="<session-project-root>"
 ```
 
-The test phase only runs if the build succeeded.
+**Cost:** this pops **two sequential** progress windows — the test invocation closes the build's window and opens its own, so you never see the whole run in one continuous view. Prefer the single-shot default above unless the separate files earn their keep.
 
 ## Arguments
 
-Arguments may combine a config keyword (`dev`/`debug`) and/or a test pattern, in any order — e.g. `/build-test debug Goap`. Missing pieces follow the Phase 1 / Phase 3 resolution rules above.
+Arguments may combine a config keyword (`dev`/`debug`) and/or a test pattern, in any order — e.g. `/build-test debug Goap`. Missing pieces follow the Phase 1 / Phase 2 resolution rules above.
