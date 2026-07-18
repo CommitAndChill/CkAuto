@@ -129,6 +129,12 @@ Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --build --conf
 - Drop `--build` to run against the already-built editor.
 - `--gauntlet-repeat N` = flake mode; `--gauntlet-include-xfail` = also run expected-FAIL tests;
   `--gauntlet-map /Game/...` = map override.
+- `--gauntlet-visual` (v1.16+) = run in a real rendered window (drops `-nullrhi`/`-nosound`, adds
+  `-windowed 1280x720`) so a human can watch the test play out. Watchdogs are DISABLED for the
+  run (a paused/inspected editor must not be killed) — the run holds the machine-wide build lock
+  until it ends, so don't leave a visual run sitting unattended. For human observation, not CI.
+  The interactive TUI also has a Gauntlet tab (v1.16+): browse/mark manifest tests, `r` run menu
+  incl. a persisted visual-mode toggle.
 - Each run's FULL editor log is archived under `Saved/Logs/Gauntlet/<timestamp>/<Test>_rN.log`;
   the `--output` log gets only heartbeats + verdicts + the `=== Gauntlet summary ===` block.
 - Verdicts: `PASS`/`FAIL`/`TEST_TIMEOUT` (bridge watchdog)/`AS_COMPILE_HANG`/`EDITOR_STALL`
