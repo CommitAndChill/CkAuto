@@ -41,16 +41,23 @@ Run that in the background with a generous timeout (10+ min). Don't poll yoursel
 
 ### Phase 1: Confirm config
 
-If the user's request includes a config keyword, use it. Otherwise ask:
-
-> "Which editor configuration — DebugGame Editor or Development Editor?"
+If the user's request includes a config keyword, use it:
 
 | User says | Flag |
 |---|---|
 | `dev` / `development` | `--config=Development` |
 | `debug` / `debuggame` | `--config=DebugGame` |
 
-If unsure, default to **DebugGame** for code-fix iteration (faster link, debuggable symbols).
+Otherwise **omit `--config` entirely** — the toolbox resolves it from its per-project
+settings / `Auto` (= the last-built config, read from the newest `Binaries/Win64/*.target`
+receipt), which follows whatever the IDE last built.
+
+**Never volunteer an explicit config the user didn't name.** On unique-build-environment
+targets every module DLL links a per-config `Default.rc2.res`, so a config FLIP relinks
+~all (~1600) module DLLs — and alternating configs between toolbox runs and the user's IDE
+causes recurring machine-wide relink storms in BOTH directions. The toolbox's
+config-following default (v1.6–v1.8) exists precisely to prevent this; an explicit
+`--config` bypasses it.
 
 ### Phase 2: Decide what to test
 
@@ -72,10 +79,11 @@ Run in the **background** — a CK-family editor build is 5-30 minutes. Use a 60
 The project root is the **primary working directory of the current session** — whatever repo Claude Code was launched from. However, if the changed files live in a *different* project (e.g. work was done in a sibling repo like BusterBlock while the session root is CkPlugins), build that project instead. Always `Set-Location` to the project being built explicitly before invoking the toolbox so the relative `./CkAuto/` and `--project=` paths resolve correctly.
 
 ```powershell
-Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --build --config=<Configuration> --target=Editor --test --test-pattern <Pattern> --output=Saved/Logs/BuildTest.log --project="<session-project-root>"
+Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --build --target=Editor --test --test-pattern <Pattern> --output=Saved/Logs/BuildTest.log --project="<session-project-root>"
 ```
 
-(Drop `--test-pattern` for the `all` case.) The test phase only runs if the build succeeded.
+(Drop `--test-pattern` for the `all` case. Add `--config=<Configuration>` ONLY when the user
+named a config in Phase 1.) The test phase only runs if the build succeeded.
 
 **Do NOT** pass `--generate` for normal iteration — it forces a project-files regeneration that adds time for no benefit. Use it only when a `*.Build.cs`, `*.uplugin`, or top-level source layout has changed since the previous build.
 
