@@ -167,6 +167,7 @@ These bit before and the toolbox docs don't all flag them:
 - **Do not commit `Saved/Logs/BuildTest.log`** (or the `Build-Editor.log` / `Test-Editor.log` of the separate-logs variant). They're scratch output. The standard `Saved/` is gitignored at the project root, but double-check if you ever stage selectively.
 - **Don't edit AngelScript/source during a test-only run beside a live editor.** A saved `.as` edit makes the live editor rewrite `Script/Generated/*` mid-run and the headless test editor logs `Full Reload is required` — grep for that phrase before trusting a red run (see the Quiescence protocol). Freeze edits until the completion notification.
 - **Exit `77`/`78`/`79` are not test failures.** `77` = a `--build` was refused because an editor is open; `78` = the run was inconclusive because a live editor contaminated it (`Contaminated: N` in the summary), with no genuine failures; `79` = a `--build` was refused because an explicit `--config` would FLIP the build config (omit `--config`, or pass `--allow-config-flip` to accept the relink). None means a real test failed. (`76` is the older "AngelScript failed to compile in the test boot itself" code — also not a test failure.) **Note `79`, not 77, for the config flip:** it was authored as 77 on `dev` while 77/78 were already taken on the live-bridge branch, and moved on merge — if you see an older doc or binary citing 77 for a config flip, it predates v1.35.
+- **Exit `75` means the engine is busy, not that anything failed — and since v1.37 it fires far less often.** The engine lock is now reader/writer: `--test`, `--gauntlet`, and warm-server boots hold it **shared** (they only read engine binaries), so a test run in a *different* worktree sharing the same engine checkout now runs **concurrently** with yours instead of blocking it. What still serializes: any `--build`/cook/package (exclusive — it waits for in-flight tests, and they wait for it), and a second test run on **this same project** (an exclusive per-project lock, because two editors on one worktree would race `Saved/`, the AS bytecode cache, and populator map saves). `--build-status` lists every live holder by session; `--no-wait` converts a wait into exit 75. Both sides must be on v1.37+ for the concurrency — an older vendored `UnrealToolbox.exe` still over-serializes (and misreports live v1.37 holders as STALE), so redeploy it in every worktree.
 
 ## Gauntlet variant (process-level tests)
 
@@ -181,8 +182,9 @@ Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --build --conf
   `--gauntlet-map /Game/...` = map override.
 - `--gauntlet-visual` (v1.16+) = run in a real rendered window (drops `-nullrhi`/`-nosound`, adds
   `-windowed 1280x720`) so a human can watch the test play out. Watchdogs are DISABLED for the
-  run (a paused/inspected editor must not be killed) — the run holds the machine-wide build lock
-  until it ends, so don't leave a visual run sitting unattended. For human observation, not CI.
+  run (a paused/inspected editor must not be killed) — the run holds the engine lock (shared, so
+  other worktrees' tests still run, but any build on that engine waits) until it ends, so don't
+  leave a visual run sitting unattended. For human observation, not CI.
   The interactive TUI also has a Gauntlet tab (v1.16+): browse/mark manifest tests, `r` run menu
   incl. a persisted visual-mode toggle.
 - Each run's FULL editor log is archived under `Saved/Logs/Gauntlet/<timestamp>/<Test>_rN.log`;
