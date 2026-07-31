@@ -204,7 +204,66 @@ Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --build --conf
 Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --test --test-pattern <Pattern> --output=Saved/Logs/Test-Editor.log --project="<session-project-root>"
 ```
 
+Do **not** hardcode `--parallel` here — the toolbox sizes the lane count to the machine it is on. See [Parallel lanes](#parallel-lanes-full-suite-runs).
+
 **Cost:** this pops **two sequential** progress windows — the test invocation closes the build's window and opens its own, so you never see the whole run in one continuous view. Prefer the single-shot default above unless the separate files earn their keep.
+
+## Parallel lanes (full-suite runs)
+
+**Toolbox v1.39+ sizes this itself — you should not normally pass `--parallel` at all.** Test batches are
+spread over N concurrent headless editors, where N is derived from the machine: the lower of
+`(physicalCores + 2) / 3` and `(availableRAM - 4GB) / 6GB`, capped at 4. Tests matching a serial lane
+(`Net`, `*Snapshot*`) stay pinned to one editor chain regardless, so multi-PIE suites never overlap.
+An auto-sized run says so in its first lines:
+
+```
+[utb --test] auto-sized to 3 concurrent editor(s) from 8 physical core(s) / 38 GB free (~6 GB per editor).
+```
+
+**Why it is derived rather than a fixed number.** This skill is vendored to every developer, and a CLI
+`--parallel` **overrides** the per-machine `tests.maxParallel` setting — so hardcoding a width here would
+strip the escape hatch from exactly the underpowered machine that needs it. Each editor holds ~5.7 GB
+resident (measured), so three of them is ~17 GB: fine on a 64 GB desktop, thrashing on a 16 GB laptop.
+Precedence is `--parallel N` (this run) > persisted `tests.maxParallel >= 1` (this machine) > auto.
+
+**Measured on BusterBlock 2026-07-30**, same 1324-test suite, same binary, back to back on an 8-core /
+63 GB machine — this is what auto is calibrated against, *not* what every machine will see:
+
+| Run | Wall clock | Speedup |
+|---|---|---|
+| serial | 23m 0s | — |
+| 3 lanes (what auto picks here) | **9m 39s** | **2.4x** |
+| 4 lanes | 8m 52s | 2.6x |
+
+A 4th lane bought only ~8% more, which is why auto caps at 4 and prefers 3 on this class of machine.
+Pass `--parallel N` yourself only to pin a run for measurement, or to force serial with `--parallel 1`.
+
+**Verdict fidelity was checked, not assumed.** All three runs reported the identical 1324 / 1319 passed /
+5 failed / 0 contaminated, with the same four stable failures. Each run also had exactly **one** extra
+failure, a *different* test every time — **including the serial run** — i.e. pre-existing flakiness, not
+something parallelism introduced. One test that failed serially actually *passed* under parallel; broken
+isolation would push reds in one direction only.
+
+**Two things this was NOT measured against — do not assume them:**
+- **`--build --test`.** Only standalone `--test` was benchmarked. After a build, `Script/Generated/*` may
+  need regenerating, and under parallel only ONE editor wins `[RegenOwnership]` — the others log
+  `runs as SECONDARY`, which disables generator writes and AS self-heal for them. Nothing makes a
+  SECONDARY *wait* for the owner to finish writing, so a build that actually changes codegen is an
+  untested race. Keep the single-shot `--build --test` serial until someone measures it.
+- **Small runs.** Each lane pays its own ~45-60s editor boot. Below a few hundred tests that dominates.
+
+**Lanes and the live/warm path are mutually exclusive**, because the live path hands the whole list to ONE
+serving editor. On toolbox ≤v1.37 that combination dropped `--parallel` **silently** — with a warm server
+up, `--test --parallel 6` ran fully serially and said nothing. From v1.38+ the two resolve by *who asked*:
+
+| You ran | With a warm server serving |
+|---|---|
+| `--test` (auto-sized width) | **routes into the warm server**, zero boot — a derived width never vetoes it |
+| `--test --parallel N` (explicit) | **declines** the warm server and takes the lanes, saying so |
+| `--test --live --parallel N` | routes live and **warns** that `--parallel` is ignored |
+
+So the zero-boot iteration loop below still works untouched — you only lose it by naming a width yourself.
+For a full-suite gate, `--no-live` is the reliable way to guarantee lanes regardless of what is serving.
 
 ## Warm server (zero-boot iteration)
 
