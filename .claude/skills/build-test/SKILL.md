@@ -127,7 +127,9 @@ named a config in Phase 1.) The test phase only runs if the build succeeded.
 
 **Do NOT** pass `--generate` for normal iteration — it forces a project-files regeneration that adds time for no benefit. Use it only when a `*.Build.cs`, `*.uplugin`, or top-level source layout has changed since the previous build.
 
-One progress LogViewer window opens at build start and is reused through the test phase (toolbox v1.15+), so the user watches build → editor boot → tests in a single window. Nothing to launch or wire — it's default-on whenever `--output` is set. On a true-headless / no-desktop machine (CI), add `--no-progress-window`.
+One progress LogViewer window opens at build start and is reused through the test phase (toolbox v1.15+), so the user watches build → editor boot → tests in a single window. Nothing to launch or wire — it's default-on whenever `--output` is set. As of toolbox v1.40, it spawns **minimized to the taskbar with a brief flash** and does not take focus — the run no longer yanks the user's foreground window away mid-task. Per-run override: `--progress-window <focus|background|minimized|minimized-flash>`; the persistent preference lives in the toolbox's per-project `settings.json` (`progressWindow.mode`). On a true-headless / no-desktop machine (CI), add `--no-progress-window`.
+
+Agent guidance: don't pass `--progress-window` by default — the persisted setting/default already governs. Pass it only when the user explicitly asks to watch the run, and then prefer `background` or `focus`.
 
 ### Phase 4: Report
 
@@ -206,7 +208,7 @@ Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --test --test-
 
 Do **not** hardcode `--parallel` here — the toolbox sizes the lane count to the machine it is on. See [Parallel lanes](#parallel-lanes-full-suite-runs).
 
-**Cost:** this pops **two sequential** progress windows — the test invocation closes the build's window and opens its own, so you never see the whole run in one continuous view. Prefer the single-shot default above unless the separate files earn their keep.
+**Cost:** this cycles through **two sequential** progress windows — the test invocation closes the build's window and opens its own — so you never see the whole run in one continuous view (both windows now spawn minimized+flash by default, so the churn is taskbar-level rather than on-screen). Prefer the single-shot default above unless the separate files earn their keep.
 
 ## Parallel lanes (full-suite runs)
 
@@ -274,19 +276,24 @@ For a full-suite gate, `--no-live` is the reliable way to guarantee lanes regard
 **Decide whether to show the window — do NOT reflexively suppress it.** v1.22 exists *specifically* so an
 interactive user can see the warm server booting and running: v1.21 had made it windowless and the
 result was that a user had **no indication it existed or was booting**. So the LogViewer is a feature,
-not desktop noise:
+not desktop noise. As of v1.40 it also spawns minimized+flash by default rather than fronting on
+screen, so the cost of leaving it on is much lower than the table below originally assumed — a window
+that never covers anything is a cheaper default to leave visible:
 
 | Situation | Pass `--no-progress-window`? |
 |---|---|
 | True headless / CI / no interactive desktop | **yes** — there is nothing to show it on |
-| Firing many short runs in a row | **yes** — a window per run is noise |
+| Firing many short runs in a row | **optional** — a minimized+flash window per run is far less noisy than the old fronting one; suppress only if even the taskbar flash bothers the user |
 | A long operation the user is waiting on (a cold pre-warm, a full suite) | **no** — the window is how they know it's alive |
 | The user asked to watch, or asked "is it doing anything?" | **no**, obviously |
 
-When in doubt with the user present, leave it visible: an unexplained 50s silence is worse than a
-window. (Earlier wording here said an agent should *always* suppress it. That flattened the v1.22
-changelog's own rule — "CI/agents get no window; interactive humans get the one window" — into a
-blanket, and the result was users seeing nothing during multi-minute operations.)
+When in doubt with the user present, leave it visible: the taskbar flash IS the liveness signal now,
+so an unexplained 50s silence is still worse than a quiet minimized window. If the user actually wants
+to watch the run (not just know it's alive), use `--progress-window background` or `--progress-window
+focus` rather than relying on the default. (Earlier wording here said an agent should *always*
+suppress it. That flattened the v1.22 changelog's own rule — "CI/agents get no window; interactive
+humans get the one window" — into a blanket, and the result was users seeing nothing during
+multi-minute operations.)
 
 ```powershell
 # headless / CI, or rapid-fire short runs:
