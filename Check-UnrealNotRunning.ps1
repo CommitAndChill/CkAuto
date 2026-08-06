@@ -75,11 +75,13 @@ function Resolve-ProjectRoot {
     return (Find-ProjectRoot (Split-Path -Parent $PSCommandPath))
 }
 
-# Editor-running probe: any exclusively-locked .log under Saved/Logs means an
-# editor for this project is running. UE keeps its active log file under an
-# exclusive write lock for the editor's lifetime. We do NOT scan process names —
-# custom engine forks rename the editor binary, so process-name scans produce
-# both false positives (other projects) and false negatives (renamed binary).
+# Editor-running probe: a .log under Saved/Logs that refuses a write-open means
+# an editor for this project is running. UE opens its active log with
+# GENERIC_WRITE and share=FILE_SHARE_READ (FILEWRITE_AllowRead ->
+# FWindowsPlatformFile::OpenWrite), so it denies write-sharing for the editor's
+# lifetime. We do NOT scan process names — custom engine forks rename the editor
+# binary, so process-name scans produce both false positives (other projects)
+# and false negatives (renamed binary).
 function Test-EditorRunning([string]$Root) {
     $logsDir = Join-Path $Root 'Saved/Logs'
     if (-not (Test-Path -LiteralPath $logsDir)) { return $false }
@@ -87,11 +89,16 @@ function Test-EditorRunning([string]$Root) {
     $logs = Get-ChildItem -LiteralPath $logsDir -Filter '*.log' -File -ErrorAction SilentlyContinue
     foreach ($log in $logs) {
         try {
+            # FileShare::Read, NOT ::None. ::None additionally fails whenever ANY
+            # other handle exists — including a passive reader such as a stray
+            # `tail -f` on a rotated log — which reports "editor open" with no
+            # editor running. ::Read still fails against the live editor, whose
+            # own handle grants no write-sharing.
             $fs = [System.IO.File]::Open(
                 $log.FullName,
                 [System.IO.FileMode]::Open,
                 [System.IO.FileAccess]::Write,
-                [System.IO.FileShare]::None)
+                [System.IO.FileShare]::Read)
             $fs.Close()
         } catch {
             return $true
