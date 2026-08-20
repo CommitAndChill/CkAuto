@@ -10,6 +10,15 @@
 # ADVISORY ONLY. It always exits 0 and never blocks; it prints the promise-gated alternative.
 # Override: set SKIP_PROMISE_GATE_HINT=1 to silence it.
 #
+# KNOWN LIMITATIONS (deliberate — this is an advisory hint, not a verifier, and a false positive costs
+# more than a miss):
+#   * A latch into a member ARRAY or MAP (`_Drivers.Add(utils_x::INTERNAL__TryFind(...))`) is missed:
+#     the pattern keys on an assignment, and a container insert is not one.
+#   * A multi-line RHS is missed — the scan is per-line, so an assignment whose INTERNAL__ call sits on
+#     a continuation line does not match.
+#   * A Write (as opposed to an Edit) re-emits hints for content that was already in the file, because
+#     the whole new content is the "added text" and there is nothing to diff it against.
+#
 # Allow-listed, per CLAUDE.md's stated set of legitimate callers — the ones that RE-RESOLVE on
 # every use and treat invalid as "not yet":
 #   1. per-tick processors                -> *_Processor*.as
@@ -73,7 +82,12 @@ if ($toolInput.PSObject.Properties.Name -contains 'edits' -and $toolInput.edits)
 if ($addedParts.Count -eq 0) { Exit-Quiet }
 
 $added = $addedParts -join "`n"
-if ($added -notmatch 'INTERNAL__') { Exit-Quiet }
+
+# Qualified scan CALLS only. A bare INTERNAL__ token is not evidence of one: CkAutoTest_Base.as:229
+# passes n"INTERNAL__AutoTest_StepTick" as an FName, and flagging that taught the reader to ignore the
+# hint. Either the call is namespace-qualified, or it names the scan family this rule is about.
+$k_ScanCallPattern = '(::INTERNAL__)|(INTERNAL__(Try)?Find)'
+if ($added -notmatch $k_ScanCallPattern) { Exit-Quiet }
 
 # ---- 3. Allow-listed paths -------------------------------------------------
 $normalized = ($filePath -replace '\\', '/')
@@ -83,7 +97,13 @@ if ($normalized -match '_Processor[^/]*\.as$') { Exit-Quiet }
 
 # The feature that OWNS the scan is the acquire/flush machinery. A declaration is an INTERNAL__
 # name that is NOT reached through a namespace — a call site always writes utils_x::INTERNAL__Y.
-if (Test-Path -LiteralPath $filePath) {
+try {
+    $fileExists = Test-Path -LiteralPath $filePath -ErrorAction Stop
+} catch {
+    $fileExists = $false
+}
+
+if ($fileExists) {
     try {
         $onDisk = Get-Content -LiteralPath $filePath -Raw -ErrorAction Stop
         foreach ($diskLine in ($onDisk -split "`r?`n")) {
@@ -104,22 +124,28 @@ $findings = New-Object System.Collections.Generic.List[string]
 
 for ($i = 0; $i -lt $lines.Count; $i++) {
     $line = $lines[$i]
-    if ($line -notmatch 'INTERNAL__') { continue }
+    if ($line -notmatch $k_ScanCallPattern) { continue }
 
     $m = [regex]::Match($line, '^\s*(?<lhs>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*=\s*[^=].*INTERNAL__')
     if (-not $m.Success) { continue }
 
     $lhs = $m.Groups['lhs'].Value
 
-    # Lazy re-resolve accessor: the assignment is guarded by an invalidity check on the same
-    # target, so the handle is re-resolved rather than trusted. CLAUDE.md names this shape.
+    # Lazy re-resolve accessor: the assignment is guarded by an invalidity check on the target, so the
+    # handle is re-resolved rather than trusted. CLAUDE.md names this shape.
+    #
+    # Matched on the assigned FIELD name rather than the whole LHS string, because the guard and the
+    # write legitimately spell the target differently — `if (ck::Is_NOT_Valid(Economy)) { State.Economy
+    # = ...; }` is the sanctioned form and an exact-string match rejects it. Both AS idioms count, and
+    # the lookback is 5 lines so a guard with a brace and a comment between it and the write still
+    # exempts.
+    $field = ($lhs -split '\.')[-1]
+
     $guarded = $false
-    $from = [Math]::Max(0, $i - 3)
+    $from = [Math]::Max(0, $i - 5)
     for ($j = $from; $j -lt $i; $j++) {
-        if ($lines[$j] -match ('Is_NOT_Valid\(\s*' + [regex]::Escape($lhs) + '\s*\)')) {
-            $guarded = $true
-            break
-        }
+        if ($lines[$j] -match ('Is_NOT_Valid\([^)]*\b' + [regex]::Escape($field) + '\s*\)')) { $guarded = $true; break }
+        if ($lines[$j] -match ('\b' + [regex]::Escape($field) + '\s*\.IsValid\(\)\s*==\s*false')) { $guarded = $true; break }
     }
     if ($guarded) { continue }
 
@@ -129,7 +155,11 @@ for ($i = 0; $i -lt $lines.Count; $i++) {
 if ($findings.Count -eq 0) { Exit-Quiet }
 
 # ---- 5. Advise -------------------------------------------------------------
-$leaf = Split-Path -Leaf $filePath
+try {
+    $leaf = Split-Path -Leaf $filePath -ErrorAction Stop
+} catch {
+    $leaf = $filePath
+}
 $body = @(
     "[promise-gate] $leaf latches an INTERNAL__ scan result into a member or field:",
     ($findings -join "`n"),
