@@ -79,6 +79,36 @@ The one hazard of running `--test` beside your open editor: if any AngelScript/s
 
 ## Procedure
 
+### Phase 0: Decide whether to run NOW, and how wide
+
+Invoking this skill is not free — a full suite is ~10 min (auto-sized lanes; ~23 min serial) and a
+`--build --test` adds 5-30 min of editor build. Before running, answer both:
+
+**Is this the right moment?** If you are partway through a planned series of related edits, finish
+them first and run **once**. The build cost is per-invocation, not per-edit. Run mid-series only
+when a change is novel/risky enough that you want to know immediately, when one change's
+correctness gates the design of the next, or when you are actively debugging (there the loop is the
+work — scope hard and use the warm server).
+
+**How wide?**
+
+| You are… | Scope |
+|---|---|
+| iterating on one feature | `--test-pattern <Module>` + warm server (`--test --live`) — seconds per run |
+| verifying a finished batch | `--test-pattern` covering **every** module the batch touched |
+| claiming done / no regressions / about to commit | full suite, `--test --no-live` — **once**, at the end |
+
+A bare `--test` (no pattern) is the **gate**, not an iteration tool. If you have run it more than
+once in a session without the code having changed meaningfully in between, you are burning the
+user's time.
+
+**Capture the baseline first.** Record the starting pass/fail counts and the *names* of
+already-failing tests before your first change — "no regressions" is meaningless without a number
+to diff against, and CK-family projects carry known pre-existing failures.
+
+**Report the scope you actually ran.** A green `--test-pattern Inventory` is not a green suite; say
+which pattern produced the result.
+
 ### Phase 1: Confirm config
 
 If the user's request includes a config keyword, use it:
@@ -106,7 +136,26 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 1. If the user passed a non-config token (e.g. `/build-test debug Goap`), use it verbatim.
 2. Otherwise infer from your own recent edits: look at which Plugins / Source modules you touched. The substring of the module name is enough — `CkGoap` → `Goap`, `CkInventory` → `Inventory`.
 3. If you can't infer, ask the user: "Test pattern? (e.g. `Goap`, `Inventory`, or `all`)".
-4. For `all`, omit `--test-pattern` entirely so every project test runs.
+4. For `all`, omit `--test-pattern` entirely so every project test runs — reserve this for the
+   end-of-work gate (Phase 0), or when the user asked for it by name.
+
+> **"Every project test" is decided by NAME, and on CK-family projects that silently drops most of
+> the C++ suite.** A test counts as a project test only if its first dotted segment matches an enabled
+> plugin or module name. `Ck` and `Bb` are house conventions, not plugins — there is no `Ck.uplugin` —
+> so `Ck.Snapshot.*`, `Bb.Snapshot.*`, `Ck.Jolt.*`, `Ck.PathNetwork.*` and their siblings classify as
+> **engine** tests and a bare `--test` skips them. Measured on BusterBlock 2026-08-22: **754 of 1029
+> registered C++ tests excluded**, every save/load gate among them, while the run still reported a
+> healthy green. Automation flags are irrelevant — a `ProductFilter` test under `Ck.*` is dropped just
+> the same.
+>
+> **So the `all` gate on this project is:**
+> ```
+> --test --project-prefix Ck --project-prefix Bb
+> ```
+> `--project-prefix` (toolbox v1.43+) only ever *widens* a run. From v1.43 a no-pattern run also
+> **prints what it excluded** (`[project-filter] EXCLUDED N of M …`) — if you see that line naming a
+> root that is yours, add it. On a toolbox older than v1.43 neither exists; use `--test-pattern Ck`
+> as the substitute sweep and say that is what you ran.
 
 **The matcher is forgiving**: case-insensitive substring tokens, any order. `Goap`, `cktests.GOAP`, and `goap.basicplan` all work. You don't need the full dotted test path.
 
