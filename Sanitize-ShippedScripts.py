@@ -7,9 +7,15 @@ every enabled plugin) as loose source next to the executable, so everything unde
 the roots below is readable by anyone who owns the game. This tool folds those
 sources to plain ASCII and keeps them that way.
 
-Player-facing text is deliberately left alone: NPC dialogue and localized UI
-strings are authored prose and their typography is intentional. Only comments,
-block comments and developer-facing log/debug strings are rewritten.
+Only comments are rewritten. The contents of a string literal are NEVER touched:
+a literal is program data, and folding it changes what the game does. That is not
+hypothetical - folding U+2B50 to "*" inside Get_RarityStars silently turned the
+movie-mixing rarity stars into asterisks, and it reached players because nobody
+re-reads a mechanical sweep.
+
+Non-ASCII inside a literal is REPORTED instead, for a human to decide: either the
+line builds FText/NSLOCTEXT (player-facing text, exempt by design) or it is meant
+to be ASCII and the author writes it that way.
 
 This file is deliberately pure ASCII -- every mapping is written by codepoint so
 the tool cannot be corrupted by an editor guessing the wrong encoding.
@@ -147,14 +153,7 @@ EMOJI = re.compile(
 _TRAILING_DASH = re.compile(u"\\s*" + EM_DASH + u"\\s*$")
 
 
-# Replacements that would emit a double quote are unsafe inside a string literal:
-# folding a curly quote to `"` there would terminate the literal and break the
-# build. Inside strings those fold to an apostrophe instead. No occurrence exists
-# today; this keeps a later edit from introducing one silently.
-STRING_SAFE = {'"': "'"}
-
-
-def _fold(text, at_eol, in_string=False):
+def _fold(text, at_eol):
     """Fold one sweepable span of text to ASCII."""
     # The spaced form is 99% of occurrences and reads naturally as " - ".
     text = text.replace(u" " + EM_DASH + u" ", " - ")
@@ -168,7 +167,7 @@ def _fold(text, at_eol, in_string=False):
 
     for src, dst in CHARMAP.items():
         if src in text:
-            text = text.replace(src, STRING_SAFE.get(dst, dst) if in_string else dst)
+            text = text.replace(src, dst)
 
     return EMOJI.sub("*", text)
 
@@ -218,10 +217,17 @@ def _spans(line):
     return out
 
 
-def sanitize_text(text, protected_file):
-    """Return the sanitized form of a whole file's text."""
+def sanitize_text(text, protected_file, literal_findings=None, path=None):
+    """Fold the comments in a file's text; never touch its string literals.
+
+    literal_findings collects (path, line, codepoints, line text) for every
+    literal carrying non-ASCII, so the caller can report what it refused to
+    rewrite. protected_file no longer gates the fold - no literal is folded in
+    any file - but it still suppresses the finding for files whose literals are
+    authored prose by definition.
+    """
     result = []
-    for raw in text.splitlines(keepends=True):
+    for lineno, raw in enumerate(text.splitlines(keepends=True), 1):
         stripped = raw.rstrip("\r\n")
         ending = raw[len(stripped):]
 
@@ -229,18 +235,23 @@ def sanitize_text(text, protected_file):
             result.append(raw)
             continue
 
-        keep_prose = protected_file or bool(PROTECTED_LINE.search(stripped))
+        exempt = protected_file or bool(PROTECTED_LINE.search(stripped))
         parts = _spans(stripped)
         rebuilt = []
         for idx, (span, is_str) in enumerate(parts):
-            if is_str and keep_prose:
-                rebuilt.append(span)                    # authored player-facing text
+            if is_str:
+                # A string literal is program-visible data, so this tool leaves it
+                # exactly as written and reports it instead. Rewriting it would turn
+                # a hygiene sweep into a behaviour change - see the module docstring.
+                if (literal_findings is not None and not exempt
+                        and any(ord(c) > 127 for c in span)):
+                    codes = sorted({ord(c) for c in span if ord(c) > 127})
+                    literal_findings.append((path, lineno, codes, stripped.strip()))
+                rebuilt.append(span)
             else:
-                rebuilt.append(_fold(span, at_eol=(idx == len(parts) - 1),
-                                     in_string=is_str))
-        new = "".join(rebuilt)
+                rebuilt.append(_fold(span, at_eol=(idx == len(parts) - 1)))
 
-        result.append(new + ending)
+        result.append("".join(rebuilt) + ending)
     return "".join(result)
 
 
@@ -276,13 +287,63 @@ def iter_files(paths):
                     yield os.path.join(dirpath, f)
 
 
+def selftest():
+    """Pin the one invariant this tool exists to keep: comments fold, literals do not.
+
+    There is no other test harness in this repo and the failure mode is silent - a
+    fold inside a literal changes what the game renders and nothing complains.
+    Folding U+2B50 to "*" is exactly how the movie-mixing rarity stars became
+    asterisks, so that case is pinned by codepoint rather than by a pasted glyph.
+    """
+    chr_ = unichr if sys.version_info[0] < 3 else chr
+    star, dash = chr_(0x2B50), chr_(0x2014)
+    failures = []
+
+    def case(label, src, want, want_findings, protected=False):
+        found = []
+        got = sanitize_text(src, protected, found, "selftest.as")
+        if got != want or len(found) != want_findings:
+            failures.append((label, got, len(found), want, want_findings))
+
+    case("a star literal survives untouched",
+         'return "' + star * 3 + '";', 'return "' + star * 3 + '";', 1)
+    case("a comment still folds",
+         "// a " + dash + " b", "// a - b", 0)
+    case("an FText line is preserved and not reported",
+         'return FText::FromString("' + star + '");',
+         'return FText::FromString("' + star + '");', 0)
+    case("protected-file prose is preserved and not reported",
+         'Say("x' + dash + '");', 'Say("x' + dash + '");', 0, protected=True)
+    case("comment folds while the literal on the same line survives",
+         'Log("' + star + '"); // a ' + dash + ' b',
+         'Log("' + star + '"); // a - b', 1)
+
+    total = 5
+    once = sanitize_text('Log("' + star + '"); // ' + dash, False)
+    total += 1
+    if sanitize_text(once, False) != once:
+        failures.append(("fold is idempotent", once, 0, once, 0))
+
+    for label, got, ngot, want, nwant in failures:
+        print("  FAIL " + label)
+        print("       got  %r (%d findings)" % (got, ngot))
+        print("       want %r (%d findings)" % (want, nwant))
+    print("selftest: %d passed, %d failed" % (total - len(failures), len(failures)))
+    return 1 if failures else 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="rewrite files in place")
     ap.add_argument("--check", action="store_true", help="report only; exit 1 if dirty")
     ap.add_argument("--paths", nargs="*", default=None, help="specific .as files")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run the built-in invariant checks and exit")
     args = ap.parse_args()
+
+    if args.selftest:
+        return selftest()
 
     if not args.apply and not args.check:
         ap.error("pass --check or --apply")
@@ -290,6 +351,7 @@ def main():
     dirty = []
     changed = 0
     residual = []
+    literal_findings = []
 
     for path in iter_files(args.paths):
         raw = open(path, "rb").read()
@@ -303,7 +365,7 @@ def main():
             new = sanitize_data_text(text)
         else:
             protected = bool(PROTECTED_FILES.search(path))
-            new = sanitize_text(text, protected)
+            new = sanitize_text(text, protected, literal_findings, path)
 
         if new != text or had_bom:
             dirty.append(path)
@@ -312,13 +374,17 @@ def main():
                     fh.write(new.encode("utf-8"))
                 changed += 1
 
-        # Anything still non-ASCII after folding, outside protected prose.
+        # A codepoint CHARMAP does not cover, still sitting in a COMMENT after the
+        # fold. String literals are never folded and are reported separately, so
+        # they are excluded here rather than counted twice.
         for num, line in enumerate(new.splitlines(), 1):
             if all(ord(c) < 128 for c in line):
                 continue
             if protected or PROTECTED_LINE.search(line):
                 continue
-            residual.append((path, num, line.strip()))
+            comment_only = "".join(sp for sp, is_str in _spans(line) if not is_str)
+            if any(ord(c) > 127 for c in comment_only):
+                residual.append((path, num, comment_only.strip()))
 
     if not args.quiet:
         if args.apply:
@@ -338,7 +404,21 @@ def main():
                 print("   %s:%d  %s" % (
                     p, num, " ".join("U+%04X" % ord(c) for c in chars)))
 
-    return 1 if (dirty or residual) else 0
+    if literal_findings:
+        print("")
+        print("NON-ASCII INSIDE A STRING LITERAL - not rewritten, decide by hand (%d):"
+              % len(literal_findings))
+        for path, num, codes, line in literal_findings[:40]:
+            print("   %s:%d  %s" % (path, num, " ".join("U+%04X" % c for c in codes)))
+            print("       %s" % line[:110])
+        if len(literal_findings) > 40:
+            print("   ... and %d more" % (len(literal_findings) - 40))
+        print("")
+        print("   A literal is program data - folding it changes what the game does.")
+        print("   Either build the line as FText/NSLOCTEXT (player-facing text is")
+        print("   exempt by design) or write the string in ASCII deliberately.")
+
+    return 1 if (dirty or residual or literal_findings) else 0
 
 
 if __name__ == "__main__":
