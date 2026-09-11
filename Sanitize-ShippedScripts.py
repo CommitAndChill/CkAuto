@@ -33,15 +33,12 @@ import sys
 
 # Script roots that end up in the packaged layout.
 #
-# THIS LIST AND DefaultGame.ini's DirectoriesToAlwaysStageAsNonUFS ARE THE SAME FACT WRITTEN TWICE,
-# and they drifted. This comment used to read "Plugins/BusterBlockTests is absent on purpose: it is
-# not staged, so its sources never reach a player" - true when it was written, false from 34e89a492
-# onward, which added that root to the stage list so a packaged Development client could host the
-# AutoTest suite. Nobody noticed for four days because the ASCII gate only runs under
-# EnableAsPrecompile=True, and that had never been on in CI. The first build that turned it on
-# failed on 4549 staged non-ASCII lines in 677 files this list had never looked at.
-#
-# If you add a root to DefaultGame.ini, add it here in the same commit.
+# THIS LIST AND DefaultGame.ini's DirectoriesToAlwaysStageAsNonUFS ARE THE SAME FACT WRITTEN TWICE.
+# A root staged there and missing here ships sources nothing ever swept, and the packaging step's
+# ASCII gate only sees it when a build ships raw sources (precompile off, or KeepSources). They
+# drifted once already: Plugins/BusterBlockTests was staged for a packaged Development client to host
+# the AutoTest suite while this list still called it unstaged, and the first build to gate it failed
+# on thousands of non-ASCII lines. Add a root to both in the same commit.
 ROOTS = [
     "Script",
     "Plugins/CkFoundation/Script",
