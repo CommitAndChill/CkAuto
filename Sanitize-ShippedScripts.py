@@ -24,6 +24,7 @@ Usage:
     python CkAuto/Sanitize-ShippedScripts.py --check
     python CkAuto/Sanitize-ShippedScripts.py --apply
     python CkAuto/Sanitize-ShippedScripts.py --check --paths Script/Foo.as
+    python CkAuto/Sanitize-ShippedScripts.py --check --skip-root Plugins/CkTests/Script
 """
 
 import argparse
@@ -39,6 +40,10 @@ import sys
 # drifted once already: Plugins/BusterBlockTests was staged for a packaged Development client to host
 # the AutoTest suite while this list still called it unstaged, and the first build to gate it failed
 # on thousands of non-ASCII lines. Add a root to both in the same commit.
+#
+# Not every root stages into every package. The test roots (CkTests, BusterBlockTests) are removed from a
+# package built without test content, so BusterBlock's package pre-check sweeps that package with
+# --skip-root for each of them. The list itself stays complete: a skip must name an entry here exactly.
 ROOTS = [
     "Script",
     "Plugins/CkFoundation/Script",
@@ -276,13 +281,13 @@ def sanitize_data_text(text):
     return DATA_SWEEP_KEYS.sub(repl, text)
 
 
-def iter_files(paths):
+def iter_files(paths, roots=ROOTS):
     if paths:
         for p in paths:
             if os.path.isfile(p):
                 yield p
         return
-    for root in ROOTS:
+    for root in roots:
         for dirpath, _, filenames in os.walk(root):
             for f in sorted(filenames):
                 # .py sweeps the content-generator tools that live under the
@@ -344,6 +349,9 @@ def main():
     ap.add_argument("--apply", action="store_true", help="rewrite files in place")
     ap.add_argument("--check", action="store_true", help="report only; exit 1 if dirty")
     ap.add_argument("--paths", nargs="*", default=None, help="specific .as files")
+    ap.add_argument("--skip-root", action="append", default=[], metavar="ROOT",
+                    help="leave one ROOTS entry out of the sweep (repeatable), for a package that does "
+                         "not stage it; must name an entry exactly")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--selftest", action="store_true",
                     help="run the built-in invariant checks and exit")
@@ -355,12 +363,24 @@ def main():
     if not args.apply and not args.check:
         ap.error("pass --check or --apply")
 
+    # A skip that names nothing would sweep everything while its caller believes it scoped the check, so an
+    # unknown root is an error, never a no-op.
+    skip = [r.replace("\\", "/").rstrip("/") for r in args.skip_root]
+    unknown = [r for r in skip if r not in ROOTS]
+    if unknown:
+        ap.error("--skip-root %s is not a ROOTS entry (ROOTS: %s)" % (", ".join(unknown), ", ".join(ROOTS)))
+    if skip and args.paths:
+        ap.error("--skip-root scopes the ROOTS sweep; it has no meaning with --paths")
+    roots = [r for r in ROOTS if r not in skip]
+    if skip and not args.quiet:
+        print("skipped roots (not staged into this package): %s" % ", ".join(skip))
+
     dirty = []
     changed = 0
     residual = []
     literal_findings = []
 
-    for path in iter_files(args.paths):
+    for path in iter_files(args.paths, roots):
         raw = open(path, "rb").read()
         had_bom = raw.startswith(b"\xef\xbb\xbf")
         if had_bom:
