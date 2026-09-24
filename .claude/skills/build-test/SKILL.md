@@ -178,6 +178,8 @@ named a config in Phase 1.) The test phase only runs if the build succeeded.
 
 One progress LogViewer window opens at build start and is reused through the test phase (toolbox v1.15+), so the user watches build → editor boot → tests in a single window. Nothing to launch or wire — it's default-on whenever `--output` is set. As of toolbox v1.40, it spawns **minimized to the taskbar with a brief flash** and does not take focus — the run no longer yanks the user's foreground window away mid-task. Per-run override: `--progress-window <focus|background|minimized|minimized-flash>`; the persistent preference lives in the toolbox's per-project `settings.json` (`progressWindow.mode`). On a true-headless / no-desktop machine (CI), add `--no-progress-window`.
 
+As of toolbox v1.46 / LogViewer v1.7, the `--output` log also carries `##ftx[progress …]` marker lines that drive that window's per-stage progress strip, taskbar-button progress and title. They are written to the file only — stdout is unchanged — and are machine lines: skip them when reading the log. None of the grep patterns below match them, and the `=== Test summary ===` block still comes after the last test marker (exception: a failed `--build` in a combined run ends with a `tests st=skip` marker).
+
 Agent guidance: don't pass `--progress-window` by default — the persisted setting/default already governs. Pass it only when the user explicitly asks to watch the run, and then prefer `background` or `focus`.
 
 ### Phase 4: Report
