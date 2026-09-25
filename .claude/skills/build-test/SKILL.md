@@ -139,23 +139,28 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 4. For `all`, omit `--test-pattern` entirely so every project test runs — reserve this for the
    end-of-work gate (Phase 0), or when the user asked for it by name.
 
-> **"Every project test" is decided by NAME, and on CK-family projects that silently drops most of
-> the C++ suite.** A test counts as a project test only if its first dotted segment matches an enabled
-> plugin or module name. `Ck` and `Bb` are house conventions, not plugins — there is no `Ck.uplugin` —
-> so `Ck.Snapshot.*`, `Bb.Snapshot.*`, `Ck.Jolt.*`, `Ck.PathNetwork.*` and their siblings classify as
-> **engine** tests and a bare `--test` skips them. Measured on BusterBlock 2026-08-22: **754 of 1029
-> registered C++ tests excluded**, every save/load gate among them, while the run still reported a
-> healthy green. Automation flags are irrelevant — a `ProductFilter` test under `Ck.*` is dropped just
-> the same.
+> **The gate population is declared by the PROJECT, in `AutomationGate.json` at its root (toolbox
+> v1.49+).** A test counts as a project test if it is a functional test, if its first dotted segment
+> is an enabled plugin/module name, or if it sits under a root the file declares. `Ck` and `Bb` are
+> house conventions, not plugins, so without the file `Ck.Snapshot.*`, `Bb.Snapshot.*`,
+> `CkAngelscriptGenerator.*` and their siblings are **engine** tests to the toolbox and a bare `--test`
+> skips them — on BusterBlock 2026-09-25 that was **2567 of 6206** discovered tests, every save/load
+> gate excluded, reported as a healthy green.
 >
-> **So the `all` gate on this project is:**
-> ```
-> --test --project-prefix Ck --project-prefix Bb
-> ```
-> `--project-prefix` (toolbox v1.43+) only ever *widens* a run. From v1.43 a no-pattern run also
-> **prints what it excluded** (`[project-filter] EXCLUDED N of M …`) — if you see that line naming a
-> root that is yours, add it. On a toolbox older than v1.43 neither exists; use `--test-pattern Ck`
-> as the substitute sweep and say that is what you ran.
+> **So the `all` gate is a bare `--test`** (plus `--no-live --discover-fresh` for the gate of record).
+> No prefix flags to remember: the roots are versioned with the tree.
+>
+> **Read the `[population]` block every run.** It prints `N of M discovered tests are in the gate
+> population`, the roots included and excluded with counts, and — with a pattern — how many the
+> pattern selected. If a root that is yours appears under `excluded`, add it to `AutomationGate.json`
+> (or pass `--project-prefix <Root>` for one run). `--test --print-population` prints the block and
+> exits without running anything — use it before a long gate.
+>
+> **`--test-pattern` narrows WITHIN the population** (v1.49); it can no longer reach engine tests
+> unless you add `--include-engine`. On a toolbox older than v1.49 a pattern *replaced* the population
+> (`--test-pattern Ck` substring-matched engine suites), and `--project-prefix` did not exist in
+> v1.45-v1.48 — if the toolbox rejects a flag this skill documents, check `UnrealToolbox.exe
+> --version` and say what you actually ran instead of improvising a different population.
 
 **The matcher is forgiving**: case-insensitive substring tokens, any order. `Goap`, `cktests.GOAP`, and `goap.basicplan` all work. You don't need the full dotted test path.
 
@@ -219,6 +224,7 @@ These bit before and the toolbox docs don't all flag them:
 - **Angelscript bindings regenerate on editor startup** — and `--test` spins up the editor — so if your C++ change exposed a new API and your AS callsites use it, the test phase exercising the AS path implicitly verifies the AS regeneration too.
 - **Do not commit `Saved/Logs/BuildTest.log`** (or the `Build-Editor.log` / `Test-Editor.log` of the separate-logs variant). They're scratch output. The standard `Saved/` is gitignored at the project root, but double-check if you ever stage selectively.
 - **Don't edit AngelScript/source during a test-only run beside a live editor.** A saved `.as` edit makes the live editor rewrite `Script/Generated/*` mid-run and the headless test editor logs `Full Reload is required` — grep for that phrase before trusting a red run (see the Quiescence protocol). Freeze edits until the completion notification.
+- **Exit `80` means the gate population was refused — no verdict was produced.** `AutomationGate.json` is present but broken (bad JSON, unknown key), or a declared root (file or `--project-prefix`) matches no discovered test. The `[population] ERROR:` line names it. Fix the file or the root name; try `--discover-fresh` if the root is new. After `--build`, where the test list is re-read mid-run, the tests still run and the exit becomes 80 at the end. It is not a build failure even though the summary block may be missing.
 - **Exit `77`/`78`/`79` are not test failures.** `77` = a `--build` was refused because an editor is open; `78` = the run was inconclusive because a live editor contaminated it (`Contaminated: N` in the summary), with no genuine failures; `79` = a `--build` was refused because an explicit `--config` would FLIP the build config (omit `--config`, or pass `--allow-config-flip` to accept the relink). None means a real test failed. (`76` is the older "AngelScript failed to compile in the test boot itself" code — also not a test failure.) **Note `79`, not 77, for the config flip:** it was authored as 77 on `dev` while 77/78 were already taken on the live-bridge branch, and moved on merge — if you see an older doc or binary citing 77 for a config flip, it predates v1.35.
 - **Exit `75` means the engine is busy, not that anything failed — and since v1.42 it is rare.** The engine lock is reader/writer. `--test`, `--gauntlet`, and warm-server boots hold it **shared** (they only read engine binaries), and since v1.42 a **build does too**, as long as the target uses a Unique build environment — such a target compiles every module, engine ones included, into its own project's `Binaries/`, so it cannot touch what another project's editor has mapped. Net effect: **a test and a build in two different worktrees sharing one engine now run at the same time, in either order.** What still serializes: anything on the **same project** (a second test, or a build vs a test — two editors on one worktree would race `Saved/`, the AS bytecode cache, and populator map saves); **build vs build** anywhere on that engine (they share the C# UBT/UAT assemblies); and anything involving **cook/package**, which stay fully exclusive. A Shared-build-environment target also stays fully exclusive, because it links against `Engine/Binaries` and can rewrite what another project's editor maps. `--build-status` lists every live holder by session; `--no-wait` converts a wait into exit 75. Both sides must be on v1.42+ for the build/test concurrency — an older vendored `UnrealToolbox.exe` still over-serializes (and misreports live holders as STALE), so redeploy it in every worktree.
 
