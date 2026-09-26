@@ -184,6 +184,27 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > for every requested test exits 1** with `RUN INCOMPLETE` and the missing names. Before v1.50 such
 > a run could exit 0. Usually it is a stale test cache, so try `--discover-fresh`.
 
+> **Renderer-only tests (toolbox v1.51+).** A test flagged `NonNullRHI` needs a real renderer, and a
+> headless (`-nullrhi`) editor does not list it at all. The toolbox discovers in both modes and runs
+> those tests in **one extra real-renderer editor (off-screen) after the headless lanes**. The
+> population block reports them as `renderer-only: N`, and the summary ends with
+> `Renderer-only: N test(s) ran in a real-renderer editor`.
+>
+> - **Flag a test `NonNullRHI` when it genuinely needs rendering:** layout capture, render targets,
+>   real Slate windows, shader compiles. **Never** use `if (!FApp::CanEverRender()) { AddInfo("Skipped"); return true; }`.
+>   That passes green in every headless gate while testing nothing.
+> - **Exit `81`** means the renderer-only tests were not run. Either the real-renderer editor could not
+>   come up (for example, no GPU) or the list could not be discovered. That is not a gate verdict. On a
+>   machine that cannot render, pass `--skip-renderer-tests`. The run then names what it skipped and
+>   keeps its normal verdict. A selection that is *only* renderer-only tests, when waived, exits 1
+>   (nothing ran).
+> - With `--no-nullrhi`, renderer-only tests simply run in the main run.
+> - The first `--test` after the toolbox upgrade re-discovers once (two boots), to learn the
+>   renderer-only list.
+> - **A headless-green test that goes red only in the full suite** after tests moved to the renderer
+>   pass is a lane-order leak (its predecessors changed), not a renderer need: run it alone
+>   (`--test-pattern <exact path>`) before flagging it.
+
 **The matcher is forgiving**: case-insensitive substring tokens, any order. `Goap`, `cktests.GOAP`, and `goap.basicplan` all work. You don't need the full dotted test path.
 
 ### Phase 3: Build + test (single-shot)
