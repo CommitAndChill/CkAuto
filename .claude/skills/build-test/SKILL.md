@@ -162,6 +162,28 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > v1.45-v1.48 — if the toolbox rejects a flag this skill documents, check `UnrealToolbox.exe
 > --version` and say what you actually ran instead of improvising a different population.
 
+> **Known reds (toolbox v1.50+).** When `AutomationGate.json` has a `"knownReds"` list, the gate
+> passes when every failure is on the list and fails on any **new** failure. Read the
+> `=== Known reds ===` block at the end of the summary:
+>
+> - **`NEW FAILURES`** are the verdict. They are yours to explain (or they came in with the base).
+> - **`Still red`** are listed, pre-existing failures. They don't fail the gate.
+> - **`Now passing`** means a listed red passed. Remove it with a fresh-boot
+>   `--test --no-live --known-reds prune` and commit the file.
+> - **`Flaked`** means a listed flaky test failed, then passed when re-run alone.
+>
+> **Never add an entry to make your own change's red go away.** An entry needs `test` (the full
+> dotted path), `status` (`red` or `flaky`), `reason`, `evidence` and `added`. It goes in its own
+> commit and is reviewed. With a current list you don't need a pre-change baseline run: a new
+> failure is named for you.
+>
+> `--known-reds off` gives the raw verdict. Exit 80 now also means a listed test no longer exists:
+> it was renamed or deleted, so fix the entry in the same change.
+>
+> **Every run names its failures** (`Failed tests (N):`), and **a run that did not produce a result
+> for every requested test exits 1** with `RUN INCOMPLETE` and the missing names. Before v1.50 such
+> a run could exit 0. Usually it is a stale test cache, so try `--discover-fresh`.
+
 **The matcher is forgiving**: case-insensitive substring tokens, any order. `Goap`, `cktests.GOAP`, and `goap.basicplan` all work. You don't need the full dotted test path.
 
 ### Phase 3: Build + test (single-shot)
@@ -224,7 +246,7 @@ These bit before and the toolbox docs don't all flag them:
 - **Angelscript bindings regenerate on editor startup** — and `--test` spins up the editor — so if your C++ change exposed a new API and your AS callsites use it, the test phase exercising the AS path implicitly verifies the AS regeneration too.
 - **Do not commit `Saved/Logs/BuildTest.log`** (or the `Build-Editor.log` / `Test-Editor.log` of the separate-logs variant). They're scratch output. The standard `Saved/` is gitignored at the project root, but double-check if you ever stage selectively.
 - **Don't edit AngelScript/source during a test-only run beside a live editor.** A saved `.as` edit makes the live editor rewrite `Script/Generated/*` mid-run and the headless test editor logs `Full Reload is required` — grep for that phrase before trusting a red run (see the Quiescence protocol). Freeze edits until the completion notification.
-- **Exit `80` means the gate population was refused — no verdict was produced.** `AutomationGate.json` is present but broken (bad JSON, unknown key), or a declared root (file or `--project-prefix`) matches no discovered test. The `[population] ERROR:` line names it. Fix the file or the root name; try `--discover-fresh` if the root is new. After `--build`, where the test list is re-read mid-run, the tests still run and the exit becomes 80 at the end. It is not a build failure even though the summary block may be missing.
+- **Exit `80` means the gate population was refused — no verdict was produced.** `AutomationGate.json` is present but broken (bad JSON, unknown key), or a declared root (file or `--project-prefix`) matches no discovered test. The `[population] ERROR:` line names it. Fix the file or the root name; try `--discover-fresh` if the root is new. After `--build`, where the test list is re-read mid-run, the tests still run and the exit becomes 80 at the end. It is not a build failure even though the summary block may be missing. Since v1.50 exit 80 also covers a `knownReds` entry naming a test that no longer exists (`[known-reds] ERROR:` names it; fix the entry, or `--known-reds prune` removes it), and a broken `knownReds` list (missing `reason`/`evidence`/`added`, bad `status`, a duplicate).
 - **Exit `77`/`78`/`79` are not test failures.** `77` = a `--build` was refused because an editor is open; `78` = the run was inconclusive because a live editor contaminated it (`Contaminated: N` in the summary), with no genuine failures; `79` = a `--build` was refused because an explicit `--config` would FLIP the build config (omit `--config`, or pass `--allow-config-flip` to accept the relink). None means a real test failed. (`76` is the older "AngelScript failed to compile in the test boot itself" code — also not a test failure.) **Note `79`, not 77, for the config flip:** it was authored as 77 on `dev` while 77/78 were already taken on the live-bridge branch, and moved on merge — if you see an older doc or binary citing 77 for a config flip, it predates v1.35.
 - **Exit `75` means the engine is busy, not that anything failed — and since v1.42 it is rare.** The engine lock is reader/writer. `--test`, `--gauntlet`, and warm-server boots hold it **shared** (they only read engine binaries), and since v1.42 a **build does too**, as long as the target uses a Unique build environment — such a target compiles every module, engine ones included, into its own project's `Binaries/`, so it cannot touch what another project's editor has mapped. Net effect: **a test and a build in two different worktrees sharing one engine now run at the same time, in either order.** What still serializes: anything on the **same project** (a second test, or a build vs a test — two editors on one worktree would race `Saved/`, the AS bytecode cache, and populator map saves); **build vs build** anywhere on that engine (they share the C# UBT/UAT assemblies); and anything involving **cook/package**, which stay fully exclusive. A Shared-build-environment target also stays fully exclusive, because it links against `Engine/Binaries` and can rewrite what another project's editor maps. `--build-status` lists every live holder by session; `--no-wait` converts a wait into exit 75. Both sides must be on v1.42+ for the build/test concurrency — an older vendored `UnrealToolbox.exe` still over-serializes (and misreports live holders as STALE), so redeploy it in every worktree.
 
