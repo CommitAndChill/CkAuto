@@ -219,13 +219,53 @@ function Test-EngineLockedPath([string]$Path) {
 # offset under BB before classification, so the engine-locked predicate (which
 # expects BB-root-relative paths like `Plugins/Foo/Content/Bar.uasset`) works.
 
+# Git Bash spells drive paths `/d/Repos/...`. .NET treats that as rooted on the
+# CURRENT drive (D:\d\Repos\...), which doesn't exist — the op then got
+# classified against the superproject instead of the submodule it targets.
+function ConvertTo-NativePath([string]$Path) {
+    if ($Path -match '^/([a-zA-Z])(/.*)?$') {
+        $rest = if ($matches[2]) { $matches[2] } else { '/' }
+        return "$($matches[1].ToUpper()):$rest"
+    }
+    return $Path
+}
+
 function Get-CommandCwd([string]$CommandLine, [string]$DefaultCwd) {
     if ($CommandLine -match '^\s*\(?\s*cd\s+(?:"([^"]+)"|''([^'']+)''|(\S+))\s*(?:&&|;)') {
         $path = if ($matches[1]) { $matches[1] } elseif ($matches[2]) { $matches[2] } else { $matches[3] }
+        $path = ConvertTo-NativePath $path
         if ([System.IO.Path]::IsPathRooted($path)) { return $path }
         return (Join-Path $DefaultCwd $path)
     }
     return $DefaultCwd
+}
+
+# `git -C <dir> <verb>` runs <verb> in <dir>; repeated -C options compose, each
+# relative to the previous one — same as successive `cd`s. Reads the segment
+# Get-GitMutatingVerb matched (first git segment carrying a mutating verb).
+function Get-GitDashCDir([string]$CommandLine, [string]$BaseCwd) {
+    $segments = $CommandLine -split '\s*(?:;|&&|\|\||\|)\s*'
+    foreach ($seg in $segments) {
+        if ($seg -notmatch '^\s*git(\s|$)') { continue }
+        $rest = ($seg -replace '^\s*git\s+', '').Trim()
+        if (-not $rest) { continue }
+        $tokens = $rest -split '\s+'
+        $dir = $BaseCwd
+        $i = 0
+        while ($i -lt $tokens.Length) {
+            $t = $tokens[$i]
+            if ($t -eq '-C' -and ($i + 1) -lt $tokens.Length) {
+                $p = ConvertTo-NativePath ($tokens[$i + 1].Trim('"', "'"))
+                $dir = if ([System.IO.Path]::IsPathRooted($p)) { $p } else { Join-Path $dir $p }
+                $i += 2; continue
+            }
+            if ($script:preVerbFlagsTakingValue -contains $t) { $i += 2; continue }
+            if ($t -match '^-') { $i += 1; continue }
+            if ($script:mutatingVerbs -contains $t) { return $dir }
+            break
+        }
+    }
+    return $BaseCwd
 }
 
 function Get-GitToplevel([string]$Cwd) {
@@ -266,14 +306,35 @@ function Get-RefArg([string]$CommandLine, [string]$Verb) {
     return $null
 }
 
-# Resolve effective repo root and its offset relative to BB root
-$opCwd = Get-CommandCwd $cmd $projectRoot
+# Resolve effective repo root and its offset relative to BB root. Start from the
+# shell's real cwd (the hook payload carries it) — a bare `git checkout` issued
+# from inside a submodule targets the submodule, not the project root.
+$sessionCwd = $projectRoot
+if ($payload.cwd) {
+    $payloadCwd = ConvertTo-NativePath ([string]$payload.cwd)
+    if (Test-Path -LiteralPath $payloadCwd) { $sessionCwd = $payloadCwd }
+}
+$opCwd = Get-GitDashCDir $cmd (Get-CommandCwd $cmd $sessionCwd)
 $gitTop = Get-GitToplevel $opCwd
-if (-not $gitTop) { $gitTop = $projectRoot }
+if (-not $gitTop) {
+    # Never fall back to the project root: that classifies the op against the
+    # wrong repo (the old `/d/...` misfire) and can under-block a submodule op.
+    Emit-Decision 'deny' (
+        "UnrealEditor is open for this project AND the directory ``git $verb`` runs in ($opCwd) " +
+        "could not be resolved to a git repository, so its affected paths are unknown. " +
+        "Retry with a native path (D:/...) or close the Unreal Editor. " +
+        "Override: set SKIP_UNREAL_GUARD=1 if you're sure."
+    )
+}
 $projectRootNorm = ($projectRoot -replace '\\','/').TrimEnd('/')
 $gitTopNorm = $gitTop.TrimEnd('/')
+$inProject = $gitTopNorm.ToLower() -eq $projectRootNorm.ToLower() -or
+             $gitTopNorm.ToLower().StartsWith(($projectRootNorm + '/').ToLower())
+# A repo outside this project (a sibling worktree, another project) can't touch
+# files this project's editor has open.
+if (-not $inProject) { Emit-Allow }
 $pathPrefix = ''
-if ($gitTopNorm -ne $projectRootNorm -and $gitTopNorm.ToLower().StartsWith(($projectRootNorm + '/').ToLower())) {
+if ($gitTopNorm.ToLower() -ne $projectRootNorm.ToLower()) {
     $pathPrefix = $gitTopNorm.Substring($projectRootNorm.Length + 1) + '/'
 }
 

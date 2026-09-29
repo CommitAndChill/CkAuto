@@ -48,7 +48,7 @@ does and how to override it:
 
 Detection is per-project: probes `Saved/Logs/*.log` for an exclusive write lock (UE holds the active log exclusively while running). Other UE instances open for unrelated projects do not trip the guard, and renamed editor binaries don't matter (no process-name scan).
 
-Submodule-aware: commands like `cd Plugins/Foo && git checkout <ref>` are recognised — the script resolves the effective repo root via `git rev-parse --show-toplevel`, enumerates against that repo, and prefixes the resulting paths with the submodule's offset under the project root before classification.
+Submodule-aware: the op's directory is resolved from the shell's cwd (the hook payload's `cwd`), then a leading `cd <path> &&`, then any `git -C <path>` options (repeatable, composed like `cd`s). Git Bash drive paths (`/d/Repos/...`) are accepted. The script resolves the effective repo root via `git rev-parse --show-toplevel`, enumerates against that repo, and prefixes the resulting paths with the submodule's offset under the project root before classification. A repo outside the project root passes silently (it can't touch this editor's files); a directory that can't be resolved to a repo is denied rather than guessed.
 
 **Limitation — submodule-rooted sessions:** the hook is wired through `<project>/.claude/settings.json`, which Claude Code only loads when the session's project root *is* the project. If you launch Claude Code from inside a submodule, our hook is not active. Workarounds: (a) launch Claude Code from the project root for any session that may do git ops, or (b) add a personal `~/.claude/settings.json` invoking a copy of the script kept somewhere stable outside the repo — note this only protects you, not teammates.
 
