@@ -180,6 +180,22 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > `--known-reds off` gives the raw verdict. Exit 80 now also means a listed test no longer exists:
 > it was renamed or deleted, so fix the entry in the same change.
 >
+> **Plugin lists (toolbox v1.52+).** A plugin can carry the known reds for its own tests in an
+> `AutomationGate.json` beside its `.uplugin` (only `"knownReds"`, never `"roots"`). Every project
+> that contains the plugin reads it, so the plugin's tests are judged alike everywhere. Its result
+> lines end in `[Plugins/<Name>]`.
+>
+> - **A plugin's entries are changed in the plugin's repo, by PR** - never from the host. Prune
+>   never edits them; a plugin's `Now passing` red says "open a PR there".
+> - **A test listed in two files exits 80** and names both. When a plugin list starts covering a
+>   test the host file lists, drop it from the host file in the same change that bumps the plugin.
+> - A plugin entry naming a test that no longer exists exits 80. A plugin the project does not
+>   enable has its list skipped, and the run says so.
+> - A listed `flaky` that passes is reported (`Listed flaky, passed`); remove the entry by hand once
+>   its cause is fixed.
+>
+> An older toolbox ignores plugin files and judges those tests raw.
+>
 > **Every run names its failures** (`Failed tests (N):`), and **a run that did not produce a result
 > for every requested test exits 1** with `RUN INCOMPLETE` and the missing names. Before v1.50 such
 > a run could exit 0. Usually it is a stale test cache, so try `--discover-fresh`.
