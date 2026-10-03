@@ -81,7 +81,8 @@ The one hazard of running `--test` beside your open editor: if any AngelScript/s
 
 ### Phase 0: Decide whether to run NOW, and how wide
 
-Invoking this skill is not free — a full suite is ~10 min (auto-sized lanes; ~23 min serial) and a
+Invoking this skill is not free - a full suite runs from ~10 min to 2.5 h depending on the project
+(BusterBlock: 2h 25m at 4691 tests, 2026-10-03; see [Long gates](#long-gates)) and a
 `--build --test` adds 5-30 min of editor build. Before running, answer both:
 
 **Is this the right moment?** If you are partway through a planned series of related edits, finish
@@ -102,9 +103,18 @@ A bare `--test` (no pattern) is the **gate**, not an iteration tool. If you have
 once in a session without the code having changed meaningfully in between, you are burning the
 user's time.
 
-**Capture the baseline first.** Record the starting pass/fail counts and the *names* of
-already-failing tests before your first change — "no regressions" is meaningless without a number
-to diff against, and CK-family projects carry known pre-existing failures.
+**The baseline is the known-red list - do not run a gate just to get one.** When the project's
+`AutomationGate.json` has a `knownReds` list (toolbox v1.50+; Ck plugins carry their own from v1.52),
+that list IS the baseline: the final gate names any failure that is not on it. A pre-change gate
+adds nothing and costs up to hours. If the final gate reports NEW failures, attribute them with the
+recipe in [Known reds: new failures, and keeping the list current](#known-reds-new-failures-and-keeping-the-list-current) -
+never by re-running the whole suite on a clean tree. Do not run a pre-change gate on the suspicion
+that the list is stale, either: a stale list shows itself in the final gate, as a NEW failure that
+is still red with your change reverted.
+
+Only when the project has no list (or the toolbox is older, or `--known-reds off`): record the
+starting pass/fail counts and the *names* of already-failing tests before your first change, and
+diff names, not counts.
 
 **Report the scope you actually ran.** A green `--test-pattern Inventory` is not a green suite; say
 which pattern produced the result.
@@ -246,6 +256,8 @@ As of toolbox v1.46 / LogViewer v1.7, the `--output` log also carries `##ftx[pro
 
 Agent guidance: don't pass `--progress-window` by default — the persisted setting/default already governs. Pass it only when the user explicitly asks to watch the run, and then prefer `background` or `focus`.
 
+**And do not pass `--no-progress-window` on a machine with a desktop.** The minimized window is how the user sees how far a build or gate has got; an agent that hides it leaves them asking. This holds for every build, test and gauntlet run, including many short runs in a row and a gate you launch detached (hide the toolbox's console if you like; keep the window). Suppress it only on a true headless / CI machine, or for a sub-minute utility call that builds and tests nothing (`--version`, `--print-population`, `--build-status`). To show a run that was started hidden: `CkAuto/LogViewer.exe --follow "<the --output file>"`.
+
 ### Phase 4: Report
 
 Everything is in `Saved/Logs/BuildTest.log` — build output first, then the editor/test output.
@@ -270,6 +282,91 @@ Everything is in `Saved/Logs/BuildTest.log` — build output first, then the edi
     Select-String -Path "Saved\Logs\BuildTest.log" -Pattern "TestResult=Failed|FinishTest TestResult=Failed"
     ```
     Each match has the test name + the assertion message from the test author. Report those verbatim — they are the structured failure output.
+
+## Known reds: new failures, and keeping the list current
+
+### The gate reports NEW FAILURES - attribute them, do not re-baseline
+
+1. **Run each NEW test alone**: fresh boot, one lane, list off -
+   `--test --no-live --parallel 1 --known-reds off --test-pattern "<full test path>"`. Read the verdict
+   from that run's own `Failed tests (N):` block (a pattern can also select sibling tests).
+2. **Green alone** -> it fails only in the suite. That is NOT yet "not mine": a change that leaks
+   shared state (an untracked entity, a console variable, a registry entry, a file on disk) reds a
+   LATER test only in-suite. If your change touches anything shared, re-run that test's group (a
+   `--test-pattern` covering it and the tests that ran before it in its lane) with and without your
+   change before calling it load-sensitive. Only then does it qualify as `flaky` (red in a full
+   gate, green alone).
+3. **Red alone** -> prove whose it is before touching the list: revert only your change (or move the
+   submodule you bumped back to its previous pin), rebuild, and run just those tests alone again.
+   Red there too = pre-existing; green there = you caused it, fix it.
+4. A test that passes alone on one run and fails alone on another **oscillates**: list it `red`, not
+   `flaky` (as flaky, a failing solo re-run fails the gate; as red, a pass only reports `Now passing`).
+   Start its `reason` with `OSCILLATES` and record a follow-up to fix the test. **While it is listed,
+   that test detects nothing** - a real regression in it reads as "still red". It is a debt, not a
+   classification to be comfortable with.
+5. A listed `flaky` that failed is re-run alone by the gate itself - unless the run is incomplete or
+   has other NEW failures. Then do that re-run by hand before judging.
+
+Never add an entry to make your own red go away, and never run the whole suite on a clean tree to
+find out what was already red: steps 1-3 answer that for the handful of tests that matter.
+
+### Where an entry belongs
+
+- A test of the **project's own** -> the project's root `AutomationGate.json`.
+- A **plugin's** test that is also red in the plugin's home project -> that plugin's
+  `AutomationGate.json`, by PR in the plugin's repo. Never copy it into a host file: a test in two
+  files exits 80.
+- A plugin's test that is red **only in this project** -> the project's root file, with the reason
+  starting `HOST-COUPLED:` and naming the coupling.
+
+### Keeping the list current is a standing job, not a one-off
+
+A list is only a baseline while it matches the branch. Left alone it goes stale in days (BusterBlock's
+gained 19 unlisted reds in the week nobody ran a full gate), and then every agent is back to proving
+which reds are theirs.
+
+- **A full judged gate on the main branch needs to run on a schedule, with a named owner** - that is
+  what keeps the list honest. On a machine that cannot render, add `--skip-renderer-tests` and say so.
+  **Until a project has that scheduled gate**, its list is only as fresh as the newest `evidence` date
+  in it, and staleness is found the slow way: a NEW failure in someone's final gate that is still red
+  with their change reverted. That person lists it (own commit, `reason` + `evidence`) - the cost of
+  having no schedule lands on whoever gates next.
+- **NEW failures on a clean main branch** are either a regression someone merged (find the commit,
+  fix or revert) or a pre-existing red nobody listed (attribute it as above, then list it in its own
+  commit with `reason` and `evidence`).
+- **`Now passing`** -> remove the entry (`--known-reds prune` on a fresh-boot full run you were
+  running anyway, or by hand), commit the file. For a plugin's entry, open the PR in the plugin's
+  repo. **Exception: an entry whose `reason` starts `OSCILLATES` is NOT removed on one pass** - it
+  passes some of the time by definition, and pruning it only brings it back as NEW in the next gate.
+  Remove it when the test is fixed. (`prune` does not know this: check its removals, restore any
+  oscillator.)
+- **`Listed flaky, passed`** proves nothing by itself; remove a `flaky` entry only when its cause is
+  fixed.
+- **Seeding a list from nothing** (a new project): two full gates on one build with `--known-reds off`,
+  then every failure alone. `red` = red in both gates AND red alone; `flaky` = red in at least one
+  gate, green alone. Each entry needs `test`, `status`, `reason` (the failure text), `evidence`
+  (which gates, which commits, which toolbox) and `added`.
+- **After a submodule bump that moves an entry into a plugin's list**, drop it from the host file in
+  the same change.
+
+## Long gates
+
+- **A full gate can outlast an agent's background-command limit** (2 h in Claude Code; BusterBlock's
+  gate is ~2.5 h). Launch it as a detached process, keep its PID, and wait on the process exiting;
+  killing the waiter must not kill the gate. Without an exit code, read the `=== Test summary ===`
+  and `=== Known reds` blocks and look for `RUN INCOMPLETE`.
+- **The slow tail is the multi-PIE tests** (`.Net.` and the snapshot suites). They run 12 per editor
+  (their editors wedge after ~18 tests) and one editor at a time (two would collide on localhost
+  ports), so each batch pays a full editor boot. On BusterBlock 329 such tests took 140 min while the
+  other 4178 took ~43 min across three lanes. A long quiet tail is that, not a hang.
+- **`RUN INCOMPLETE` after a boot hang**: a lane editor that stalls during boot is killed by the idle
+  watchdog; two hung spawns abandon the group. Do not re-run the whole gate. Take the group's tests
+  from its `Automation RunTests a+b+c` line in the log and run them as targeted judged runs
+  (`--test-pattern` takes one AND-pattern per run), then re-run any failed listed flakies alone.
+- **Copy a gate's `--output` log somewhere else before the next run**: the toolbox rotates
+  `Saved/Logs`.
+- **Never run two gates on one machine at once** unless you mean to: the second one starves the
+  first, and load-sensitive tests go red.
 
 ## Traps to avoid
 
@@ -399,7 +496,7 @@ that never covers anything is a cheaper default to leave visible:
 | Situation | Pass `--no-progress-window`? |
 |---|---|
 | True headless / CI / no interactive desktop | **yes** — there is nothing to show it on |
-| Firing many short runs in a row | **optional** — a minimized+flash window per run is far less noisy than the old fronting one; suppress only if even the taskbar flash bothers the user |
+| Firing many short runs in a row | **no** by default - a minimized+flash window per run is quiet enough; suppress only when the user has said the flashes bother them |
 | A long operation the user is waiting on (a cold pre-warm, a full suite) | **no** — the window is how they know it's alive |
 | The user asked to watch, or asked "is it doing anything?" | **no**, obviously |
 
@@ -412,7 +509,7 @@ humans get the one window" — into a blanket, and the result was users seeing n
 multi-minute operations.)
 
 ```powershell
-# headless / CI, or rapid-fire short runs:
+# headless / CI ONLY (no desktop to show a window on):
 Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --warm-server start --no-progress-window --project="<session-project-root>"
 # user is present and waiting on the boot — let them see it:
 Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --warm-server start --project="<session-project-root>"
@@ -421,8 +518,8 @@ Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --warm-server 
 `start` is **idempotent** (a no-op if one is already serving) and blocks until the server arms (~60s cold) or times out. Then route runs into it with `--live` — no boot:
 
 ```powershell
-# drop --no-progress-window when the user is watching; a routed run REUSES the warm server's window
-Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --test --live --no-progress-window --test-pattern <Pattern> --output=Saved/Logs/Test-Editor.log --project="<session-project-root>"
+# a routed run REUSES the warm server's window; add --no-progress-window only on headless / CI
+Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --test --live --test-pattern <Pattern> --output=Saved/Logs/Test-Editor.log --project="<session-project-root>"
 ```
 
 - **`--live`** routes into the warm server (or *launches* one if none is serving, then routes — falling back to a fresh boot only if it can't come up). `--no-live` forces today's fresh-boot path.
