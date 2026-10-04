@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-Choose a clone-local Unreal build profile.
+Choose a clone-local Unreal build profile or preview obsolete configuration artifacts.
 .DESCRIPTION
-Status is read-only. SetProfile manages only this project's
+Status and PreviewCleanup are read-only. SetProfile manages only this project's
 DebugInfo XML setting, with an exact baseline snapshot for Default restoration.
 Lean retains engine/compiler symbols and Windows link PDBs. No build or cleanup
 is launched. Engine source capability is checked before setting Full or Lean.
@@ -10,12 +10,15 @@ is launched. Engine source capability is checked before setting Full or Lean.
 .\CkAuto\ProjectStorage.ps1 -Project . -Action SetProfile -Profile Lean
 .EXAMPLE
 .\CkAuto\ProjectStorage.ps1 -Project . -Action SetProfile -Profile Default
+.EXAMPLE
+.\CkAuto\ProjectStorage.ps1 -Project . -Action PreviewCleanup -Configuration DebugGame
 #>
 [CmdletBinding(SupportsShouldProcess=$true)]
 param(
     [string]$Project = (Split-Path -Parent $PSScriptRoot),
-    [ValidateSet('Status','SetProfile')][string]$Action = 'Status',
+    [ValidateSet('Status','SetProfile','PreviewCleanup')][string]$Action = 'Status',
     [ValidateSet('Lean','Full','Default')][string]$Profile,
+    [ValidateSet('DebugGame','Debug','Test','Shipping')][string[]]$Configuration = @('DebugGame'),
     [string]$EngineRoot
 )
 $ErrorActionPreference = 'Stop'
@@ -26,6 +29,10 @@ try {
         'SetProfile' {
             if (-not $Profile) { throw '-Profile is required for SetProfile.' }
             Set-ProjectStorageProfile -Project $Project -Profile $Profile -EngineRoot $EngineRoot -WhatIf:$WhatIfPreference
+        }
+        'PreviewCleanup' {
+            Import-Module (Join-Path $PSScriptRoot 'Common\ProjectCleanupPreview.psm1') -Force -ErrorAction Stop
+            Get-ProjectCleanupPreview -Project $Project -Configuration $Configuration
         }
     }
 } catch {
