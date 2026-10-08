@@ -212,8 +212,10 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 
 > **Renderer-only tests (toolbox v1.51+).** A test flagged `NonNullRHI` needs a real renderer, and a
 > headless (`-nullrhi`) editor does not list it at all. The toolbox discovers in both modes and runs
-> those tests in **one extra real-renderer editor (off-screen) after the headless lanes**. The
-> population block reports them as `renderer-only: N`, and the summary ends with
+> those tests in **one extra real-renderer editor (off-screen)**. With several editors (v1.55+) that
+> is one more group, `[renderer]`, picked up by the first editor that runs out of lanes while the
+> others are still going; on one editor, and after `--build`, it still runs after the headless lanes.
+> The population block reports them as `renderer-only: N`, and the summary ends with
 > `Renderer-only: N test(s) ran in a real-renderer editor`.
 >
 > - **Flag a test `NonNullRHI` when it genuinely needs rendering:** layout capture, render targets,
@@ -355,10 +357,22 @@ which reds are theirs.
   gate is ~2.5 h). Launch it as a detached process, keep its PID, and wait on the process exiting;
   killing the waiter must not kill the gate. Without an exit code, read the `=== Test summary ===`
   and `=== Known reds` blocks and look for `RUN INCOMPLETE`.
-- **The slow tail is the multi-PIE tests** (`.Net.` and the snapshot suites). They run 12 per editor
-  (their editors wedge after ~18 tests) and one editor at a time (two would collide on localhost
-  ports), so each batch pays a full editor boot. On BusterBlock 329 such tests took 140 min while the
-  other 4178 took ~43 min across three lanes. A long quiet tail is that, not a hang.
+- **The multi-PIE tests** (`.Net.` and the snapshot suites) run one editor at a time (two would
+  collide on localhost ports). From v1.55 they are ONE group in one editor, beside the other lanes;
+  before that they ran 12 per editor and each batch paid an editor boot (on BusterBlock about 80 min
+  of a 2 h 20 min gate). If that editor hangs it costs one watchdog timeout and the group resumes in a
+  fresh editor. `--net-batch-size N` puts a cap back for one run, to find where a hang starts.
+- **`=== Fill pass ===` (v1.55+)**: tests an editor left behind after giving up on its group (two
+  boots with no result) are run once more at the end of the run. The run is whole if they get results
+  then; `RUN INCOMPLETE` is what is still missing after that.
+- **Test editors read the machine's saved game settings** unless told otherwise. A saved frame-rate
+  limit applies to every test editor, and a test that changes a setting changes it in your game.
+  `--own-game-settings` (v1.55+, opt-in) gives each test editor an empty settings file of its own
+  under `Saved/UnrealToolbox/TestGameSettings/`. `--editor-args "<args>"` adds editor arguments to
+  every test editor (a diagnostic, for example a CPU trace of a headless editor).
+- **A headless command no longer needs a saved engine choice (v1.55+).** `--build`, `--test`,
+  `--gauntlet` and `--warm-server` fall back to the engine the `.uproject` names and print a NOTE;
+  `--engine-path <dir>` names the engine folder outright on a machine with no registered engine.
 - **`RUN INCOMPLETE` after a boot hang**: a lane editor that stalls during boot is killed by the idle
   watchdog; two hung spawns abandon the group. Do not re-run the whole gate. Take the group's tests
   from its `Automation RunTests a+b+c` line in the log and run them as targeted judged runs
@@ -429,6 +443,9 @@ Do **not** hardcode `--parallel` here — the toolbox sizes the lane count to th
 spread over N concurrent headless editors, where N is derived from the machine: the lower of
 `(physicalCores + 2) / 3` and `(availableRAM - 4GB) / 6GB`, capped at 4. Tests matching a serial lane
 (`Net`, `*Snapshot*`) stay pinned to one editor chain regardless, so multi-PIE suites never overlap.
+When a run has such a chain (v1.55+), the other tests are cut into twice as many lanes as there are
+editors, so an editor that finishes early keeps pulling work; the summary counts lanes, not editors
+(`6 lane(s)` on 3 editors).
 An auto-sized run says so in its first lines:
 
 ```
