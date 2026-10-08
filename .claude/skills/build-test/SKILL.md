@@ -210,6 +210,28 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > for every requested test exits 1** with `RUN INCOMPLETE` and the missing names. Before v1.50 such
 > a run could exit 0. Usually it is a stale test cache, so try `--discover-fresh`.
 
+> **Deferred tests (toolbox v1.56+).** `AutomationGate.json` can list tests that stay in the gate
+> population but are left out of a plain `--test`: `"deferred": [ { "pattern": "Benchmark",
+> "reason": "...", "added": "YYYY-MM-DD" } ]`. It is for tests that cost time without saying
+> whether a change is safe to merge (benchmarks, stress runs, a listed red that runs to its timeout).
+>
+> - **A plain `--test` is the merge gate and skips them; `--include-deferred` is the scheduled gate
+>   and runs everything.** The first `[population]` line says how many are deferred, and the
+>   `deferred:` line lists each pattern with its count. Say which of the two you ran.
+> - A pattern is a lane pattern, like `--serial-lane`: `Benchmark` is a whole dotted segment,
+>   `*Perf` ends a segment, tokens joined by `.` must all match. A full test path also defers
+>   anything nested under it, so **read the per-pattern count after adding one**.
+> - `--test-pattern` does not reach a deferred test. The run says `N more match but are deferred`;
+>   add `--include-deferred` to run it.
+> - A deferred listed red is never `Now passing` in a merge gate; only a run with
+>   `--include-deferred` can prune it.
+> - **Exit `80`** if the list does not describe the build: a pattern that matches no test, a pattern
+>   made only of `*`, or patterns that defer every test under a declared root (drop the root).
+> - Never add a pattern to make a failing or slow test of your own change go away. An entry needs a
+>   reason a reviewer would accept for keeping the test out of every merge.
+> - A toolbox older than v1.56 refuses a file that has the key (exit 80), so the CkAuto pin with
+>   v1.56 lands in a project before its list does.
+
 > **Renderer-only tests (toolbox v1.51+).** A test flagged `NonNullRHI` needs a real renderer, and a
 > headless (`-nullrhi`) editor does not list it at all. The toolbox discovers in both modes and runs
 > those tests in **one extra real-renderer editor (off-screen)**. With several editors (v1.55+) that
