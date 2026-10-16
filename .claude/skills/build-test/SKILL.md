@@ -81,8 +81,8 @@ The one hazard of running `--test` beside your open editor: if any AngelScript/s
 
 ### Phase 0: Decide whether to run NOW, and how wide
 
-Invoking this skill is not free - a full suite runs from ~10 min to 2.5 h depending on the project
-(BusterBlock: 2h 25m at 4691 tests, 2026-10-03; see [Long gates](#long-gates)) and a
+Invoking this skill is not free - a full suite runs from ~10 min to ~1 h or more depending on the project
+(BusterBlock: 1h 0m at 4830 tests, 2026-10-15; 2h 25m before v1.55; see [Long gates](#long-gates)) and a
 `--build --test` adds 5-30 min of editor build. Before running, answer both:
 
 **Is this the right moment?** If you are partway through a planned series of related edits, finish
@@ -97,7 +97,7 @@ work — scope hard and use the warm server).
 |---|---|
 | iterating on one feature | `--test-pattern <Module>` + warm server (`--test --live`) — seconds per run |
 | verifying a finished batch | `--test-pattern` covering **every** module the batch touched |
-| claiming done / no regressions / about to commit | full suite, `--test --no-live` — **once**, at the end |
+| claiming done / no regressions / about to commit | full suite, `--test --no-live` — **once**, at the end - unless the project's CLAUDE.md defines when a scoped run may close instead; then that rule governs |
 
 A bare `--test` (no pattern) is the **gate**, not an iteration tool. If you have run it more than
 once in a session without the code having changed meaningfully in between, you are burning the
@@ -378,7 +378,7 @@ which reds are theirs.
 ## Long gates
 
 - **A full gate can outlast an agent's background-command limit** (2 h in Claude Code; BusterBlock's
-  gate is ~2.5 h). Launch it as a detached process, keep its PID, and wait on the process exiting;
+  gate was ~2.5 h before v1.55 and ~1 h after, plus any build). Launch it as a detached process, keep its PID, and wait on the process exiting;
   killing the waiter must not kill the gate. Without an exit code, read the `=== Test summary ===`
   and `=== Known reds` blocks and look for `RUN INCOMPLETE`.
 - **The multi-PIE tests** (`.Net.` and the snapshot suites) run one editor at a time (two would
