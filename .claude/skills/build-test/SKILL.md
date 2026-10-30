@@ -210,6 +210,23 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > for every requested test exits 1** with `RUN INCOMPLETE` and the missing names. Before v1.50 such
 > a run could exit 0. Usually it is a stale test cache, so try `--discover-fresh`.
 
+> **Automation folders (toolbox v1.74+).** Every test editor gets its own automation folder,
+> `Saved/UnrealToolbox/Automation/<label>_<spawn>/`, instead of the shared `Saved/Automation/`.
+> Each editor deletes that folder's `Tmp/` and `Logs/` when it starts tests, so editors sharing one
+> folder deleted files another lane's test was still writing. Gate screenshots and reports are in
+> those per-editor folders, so Session Frontend's screenshot browser no longer shows them. The
+> summary says which you got:
+>
+> - **`Automation folders: per editor (N ...)`**: the engine honoured the folder.
+> - **`=== AUTOMATION FOLDER SHARED ===`**: the engine lacks the Ck fork's `-CkAutomationDir` patch
+>   (UE 5.8 `main-ck` has it, 5.7 does not) and editors ran at the same time. A failure that names a
+>   missing file under `Saved/Automation/Tmp` can come from another lane, not from your change.
+>   Run the test alone before blaming your change.
+> - **`UNVERIFIED`**: an editor ran tests but never logged its `Clearing` line, so the toolbox cannot
+>   tell which folder it used.
+>
+> These lines only report; they never change the verdict or the exit code.
+
 > **Deferred tests (toolbox v1.56+).** `AutomationGate.json` can list tests that stay in the gate
 > population but are left out of a plain `--test`: `"deferred": [ { "pattern": "Benchmark",
 > "reason": "...", "added": "YYYY-MM-DD" } ]`. It is for tests that cost time without saying
