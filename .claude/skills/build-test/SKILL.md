@@ -227,6 +227,23 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 >
 > These lines only report; they never change the verdict or the exit code.
 
+> **Frame rate (toolbox v1.75+).** Every editor that `--test` starts runs at `t.MaxFPS 60`: lanes,
+> discovery, the renderer pass and the warm server. The run prints
+> `=== Frame rate: test editors run at t.MaxFPS 60 ... ===`. Before v1.75 the rate came from the
+> clone's saved `Saved/Config/WindowsEditor/GameUserSettings.ini` `FrameRateLimit`, which the editor
+> applies after every ini or `-dpcvars` route. A clone with 0 saved (Mars, any fresh clone) ran
+> uncapped, or at a project's 30 fps editor smoothing cap. So **compare gates only within the same
+> rate**: a pre-v1.75 gate from a clone with 0 saved is not a baseline for a pinned one.
+>
+> - **`--max-fps N`** runs one gate at another rate, and **`--max-fps 0`** turns the pin off. Both
+>   imply `--no-live`. Use them to look for frame-rate dependencies, which the pin hides: a test
+>   that waits N frames when it means a span of time, gameplay that only works at 60, and net
+>   bandwidth at `t.MaxFPS 0`, where each frame is credited at most 1/120 s of bandwidth. A test
+>   that is red only at another rate is a real finding. Record it; don't list it as a known red.
+> - **A warm server started by an older toolbox** keeps the rate it booted with until it exits.
+>   A routed `--test` still prints the pinned line. Use `--no-live` for the gate of record.
+> - Gauntlet, `--launch-editor` and `--live` into your own editor are not pinned.
+
 > **Deferred tests (toolbox v1.56+).** `AutomationGate.json` can list tests that stay in the gate
 > population but are left out of a plain `--test`: `"deferred": [ { "pattern": "Benchmark",
 > "reason": "...", "added": "YYYY-MM-DD" } ]`. It is for tests that cost time without saying
@@ -409,8 +426,9 @@ which reds are theirs.
 - **`=== Fill pass ===` (v1.55+)**: tests an editor left behind after giving up on its group (two
   boots with no result) are run once more at the end of the run. The run is whole if they get results
   then; `RUN INCOMPLETE` is what is still missing after that.
-- **Test editors read the machine's saved game settings** unless told otherwise. A saved frame-rate
-  limit applies to every test editor, and a test that changes a setting changes it in your game.
+- **Test editors read the machine's saved game settings** unless told otherwise. A test that changes
+  a setting changes it in your game. The saved frame-rate limit no longer decides the test rate from
+  v1.75: the toolbox pins `t.MaxFPS` (see **Frame rate** above).
   `--own-game-settings` (v1.55+, opt-in) gives each test editor an empty settings file of its own
   under `Saved/UnrealToolbox/TestGameSettings/`. `--editor-args "<args>"` adds editor arguments to
   every test editor (a diagnostic, for example a CPU trace of a headless editor).
