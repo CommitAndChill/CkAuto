@@ -244,6 +244,23 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 >   A routed `--test` still prints the pinned line. Use `--no-live` for the gate of record.
 > - Gauntlet, `--launch-editor` and `--live` into your own editor are not pinned.
 
+> **Script/Generated regen pass (toolbox v1.77+).** Before any discovery or test editor starts,
+> `--test` checks whether `Script/Generated` may be stale. It may be stale when no regen has been
+> recorded (a fresh clone, or the first v1.77 run), when a plugin submodule or the engine moved, when a
+> generated file was written or deleted since (a cook does this, and so does a lone renderer-only test
+> run, which rewrites `cvar.as`), or when a self-heal stub is on disk. If so, one owner editor
+> regenerates it first. The log says which applied:
+>
+> - **`Script/Generated: up to date — ...`**: nothing to do; the check costs a few file reads.
+> - **`Script/Generated: regenerating before the test editors start — <reason>`**, then
+>   `regenerated in N editor boot(s)`: about 30 s per boot on Mars, longer on bigger projects. A stale tree takes 2 boots, a fresh clone 3.
+>
+> This is why a fresh clone's first `--test` no longer exits 76 and no longer needs a manual
+> `--launch-editor` boot, and why a pin move no longer produces `Contaminated: N`. If the AngelScript
+> compile still fails after the pass, the run exits 76 before any lane starts: fix the `.as` error.
+> `--no-script-regen` skips the pass. The record is `Saved/UnrealToolbox/ScriptRegenStamp.json`;
+> deleting it forces the pass on the next run.
+
 > **Deferred tests (toolbox v1.56+).** `AutomationGate.json` can list tests that stay in the gate
 > population but are left out of a plain `--test`: `"deferred": [ { "pattern": "Benchmark",
 > "reason": "...", "added": "YYYY-MM-DD" } ]`. It is for tests that cost time without saying
@@ -545,7 +562,9 @@ isolation would push reds in one direction only.
   need regenerating, and under parallel only ONE editor wins `[RegenOwnership]` — the others log
   `runs as SECONDARY`, which disables generator writes and AS self-heal for them. Nothing makes a
   SECONDARY *wait* for the owner to finish writing, so a build that actually changes codegen is an
-  untested race. Keep the single-shot `--build --test` serial until someone measures it.
+  untested race. Keep the single-shot `--build --test` serial until someone measures it. Since toolbox
+  v1.77 the pre-lane regen pass (see **Script/Generated regen pass** above) closes the cases it can detect, a plugin pin move or a
+  rewritten generated file, but not a C++ change inside the project that alters codegen.
 - **Small runs.** Each lane pays its own ~45-60s editor boot. Below a few hundred tests that dominates.
 
 **Lanes and the live/warm path are mutually exclusive**, because the live path hands the whole list to ONE
