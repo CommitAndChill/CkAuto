@@ -15,14 +15,22 @@
 
       1. the NEW binary names a clean commit (no "-dirty", not "unknown")         - its source exists;
       2. that commit is on the source repo's origin/dev                          - its source is published;
-      3. the CURRENT binary's commit is an ancestor of the new one               - nothing it had is dropped.
+      3. the CURRENT binary's commit is an ancestor of the new one               - nothing it had is dropped;
+      4. every CkAuto/docs/*.md matches the source repo's docs/ at the new commit - the guides describe
+                                                                                    the binary they ship with.
+
+    Check 4 exists because deploys copied only UnrealToolbox.exe: docs/UnrealToolboxStorage.md was added
+    with v1.54 and stayed at that text through v1.78, still saying Debug symbols None requires Unique
+    after v1.69 made None work on Shared. -SyncDocs copies each stale doc from the new commit (byte-exact)
+    when checks 1-3 pass; commit them with the binary. A doc vendored here but absent from the source is
+    reported, not refused. To ship another toolbox guide, add its file under CkAuto/docs/ once.
 
     Exit 0 = safe to vendor. Exit 1 = refused (the reasons are printed). Exit 2 = could not check.
     -Force turns a refusal into exit 0 and prints the line to put in the deploy commit message; a
     forced deploy must say so where the next deployer will read it.
 
 .EXAMPLE
-    powershell -NoProfile -ExecutionPolicy Bypass -File CkAuto/Test-ToolboxProvenance.ps1 -NewExe ../FtxCatalyst_Build/apps/UnrealToolbox/Release/UnrealToolbox.exe
+    powershell -NoProfile -ExecutionPolicy Bypass -File CkAuto/Test-ToolboxProvenance.ps1 -NewExe ../FtxCatalyst_Build/apps/UnrealToolbox/Release/UnrealToolbox.exe -SyncDocs
 
 .NOTES
     Windows PowerShell 5.1 compatible (agents' `powershell` is 5.1). ASCII only.
@@ -34,6 +42,7 @@ param(
     [string] $SourceRepo,      # FtxCatalyst (formerly FtxUiFramework) clone; default: $env:FTX_CATALYST_REPO or a sibling of the project
     [string] $SourceRef = 'origin/dev',   # the branch a vendored binary's source must be on
     [switch] $NoFetch,
+    [switch] $SyncDocs,        # copy stale CkAuto/docs/*.md from the new binary's commit (only when checks 1-3 pass)
     [switch] $Force
 )
 
@@ -97,6 +106,22 @@ function Test-GitAncestor([string] $InRepo, [string] $InAncestor, [string] $InDe
     return ($LASTEXITCODE -eq 0)
 }
 
+# Raw blob bytes. A PowerShell 5.1 pipeline or '>' would re-encode the text (UTF-16, CRLF).
+function Get-GitBlobBytes([string] $InRepo, [string] $InSpec) {
+    $Psi = New-Object System.Diagnostics.ProcessStartInfo
+    $Psi.FileName = 'git'
+    $Psi.Arguments = "-C `"$InRepo`" cat-file blob $InSpec"
+    $Psi.UseShellExecute = $false
+    $Psi.RedirectStandardOutput = $true
+    $Psi.CreateNoWindow = $true
+    $Proc = [System.Diagnostics.Process]::Start($Psi)
+    $Buffer = New-Object System.IO.MemoryStream
+    $Proc.StandardOutput.BaseStream.CopyTo($Buffer)
+    $Proc.WaitForExit()
+    if ($Proc.ExitCode -ne 0) { return $null }
+    return , $Buffer.ToArray()
+}
+
 if (-not $CurrentExe) { $CurrentExe = Join-Path $ScriptDir 'UnrealToolbox.exe' }
 
 $Repo = Resolve-SourceRepo $SourceRepo
@@ -156,8 +181,38 @@ if (-not $CurrentSha) {
     }
 }
 
+# Check 4: vendored docs. Compared as git blobs, so a CRLF checkout of an LF source still matches.
+$DocsDir = Join-Path $ScriptDir 'docs'
+if ((Test-Path -LiteralPath $DocsDir) -and (Test-GitCommit $Repo $NewClean)) {
+    $StaleDocs = @()
+    foreach ($Doc in (Get-ChildItem -LiteralPath $DocsDir -Filter '*.md' | Where-Object { -not $_.PSIsContainer })) {
+        $Rel = "docs/$($Doc.Name)"
+        $SourceBlob = & git -C $Repo rev-parse --verify --quiet "$($NewClean):$Rel" 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $SourceBlob) {
+            Write-Host "[provenance] WARNING: $Rel is vendored here but not in the source at $NewClean - nothing to sync it from."
+            continue
+        }
+        $LocalBlob = & git -C $ScriptDir hash-object -- $Rel 2>$null
+        if ($LocalBlob -ne $SourceBlob) { $StaleDocs += $Doc }
+    }
+    if ($StaleDocs.Count -gt 0 -and $SyncDocs -and $Refusals.Count -eq 0) {
+        $Unsynced = @()
+        foreach ($Doc in $StaleDocs) {
+            $Bytes = Get-GitBlobBytes $Repo "$($NewClean):docs/$($Doc.Name)"
+            if ($null -eq $Bytes) { $Unsynced += $Doc; continue }
+            [System.IO.File]::WriteAllBytes($Doc.FullName, $Bytes)
+            Write-Host "[provenance] synced docs/$($Doc.Name) from $NewClean - commit it with the binary."
+        }
+        $StaleDocs = $Unsynced
+    }
+    if ($StaleDocs.Count -gt 0) {
+        $Names = ($StaleDocs | ForEach-Object { "docs/$($_.Name)" }) -join ', '
+        $Refusals += "$Names differ from the source at $NewClean - the vendored guides would describe another binary. Re-run with -SyncDocs to copy them."
+    }
+}
+
 if ($Refusals.Count -eq 0) {
-    Write-Host "[provenance] OK - source is on $SourceRef and contains the current binary's commit."
+    Write-Host "[provenance] OK - source is on $SourceRef and contains the current binary's commit; vendored docs match it."
     exit 0
 }
 
