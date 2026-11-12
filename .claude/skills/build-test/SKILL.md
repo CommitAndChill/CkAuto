@@ -96,7 +96,7 @@ work — scope hard and use the warm server).
 | You are… | Scope |
 |---|---|
 | iterating on one feature | `--test-pattern <Module>` + warm server (`--test --live`) — seconds per run |
-| verifying a finished batch | `--test-pattern` covering **every** module the batch touched |
+| verifying a finished batch | `--test-pattern` covering **every** module the batch touched — one run: repeat `--test-pattern` once per module (v1.79+) |
 | claiming done / no regressions / about to commit | full suite, `--test --no-live` — **once**, at the end - unless the project's CLAUDE.md defines when a scoped run may close instead; then that rule governs |
 
 A bare `--test` (no pattern) is the **gate**, not an iteration tool. If you have run it more than
@@ -247,9 +247,8 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > **Script/Generated regen pass (toolbox v1.77+).** Before any discovery or test editor starts,
 > `--test` checks whether `Script/Generated` may be stale. It may be stale when no regen has been
 > recorded (a fresh clone, or the first v1.77 run), when a plugin submodule or the engine moved, when a
-> generated file was written or deleted since (a cook does this, and so does a lone renderer-only test
-> run, which rewrites `cvar.as`), or when a self-heal stub is on disk. If so, one owner editor
-> regenerates it first. The log says which applied:
+> generated file was written or deleted since (a cook does this), or when a self-heal stub is on disk.
+> If so, one owner editor regenerates it first. The log says which applied:
 >
 > - **`Script/Generated: up to date — ...`**: nothing to do; the check costs a few file reads.
 > - **`Script/Generated: regenerating before the test editors start — <reason>`**, then
@@ -260,6 +259,15 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > compile still fails after the pass, the run exits 76 before any lane starts: fix the `.as` error.
 > `--no-script-regen` skips the pass. The record is `Saved/UnrealToolbox/ScriptRegenStamp.json`;
 > deleting it forces the pass on the next run.
+>
+> **Who else may write `Script/Generated` (v1.79+).** The discovery editors and every real-renderer
+> test editor never do: a real-renderer editor writes a different `cvar.as` (renderer console variables
+> exist only with a renderer), which made the run after a `--discover-fresh` or renderer-only run pay a
+> regen boot for nothing. The first headless test editor still may, even right after the pass. That is
+> deliberate: the pass cannot see a project `.as` edit, uncommitted plugin C++ or content-driven
+> `*Assets.as`, says "up to date" there and boots nothing, and that test editor is what regenerates
+> them; on a current tree it writes nothing. A file rewritten with identical bytes no longer counts as
+> changed (the record keeps content hashes).
 
 > **Deferred tests (toolbox v1.56+).** `AutomationGate.json` can list tests that stay in the gate
 > population but are left out of a plain `--test`: `"deferred": [ { "pattern": "Benchmark",
@@ -454,8 +462,9 @@ which reds are theirs.
   `--engine-path <dir>` names the engine folder outright on a machine with no registered engine.
 - **`RUN INCOMPLETE` after a boot hang**: a lane editor that stalls during boot is killed by the idle
   watchdog; two hung spawns abandon the group. Do not re-run the whole gate. Take the group's tests
-  from its `Automation RunTests a+b+c` line in the log and run them as targeted judged runs
-  (`--test-pattern` takes one AND-pattern per run), then re-run any failed listed flakies alone.
+  from its `Automation RunTests a+b+c` line in the log and run them as one targeted judged run
+  (repeat `--test-pattern` once per test, v1.79+: a test runs when it matches any of them), then
+  re-run any failed listed flakies alone.
 - **Copy a gate's `--output` log somewhere else before the next run**: the toolbox rotates
   `Saved/Logs`.
 - **Never run two gates on one machine at once** unless you mean to: the second one starves the
@@ -623,7 +632,8 @@ Set-Location "<session-project-root>"; ./CkAuto/UnrealToolbox.exe --test --live 
 ```
 
 - **`--live`** routes into the warm server (or *launches* one if none is serving, then routes — falling back to a fresh boot only if it can't come up). `--no-live` forces today's fresh-boot path.
-- **`--warm-server status`** prints the serving pid / idle-or-busy (exit 0 serving, 1 none); **`--warm-server stop`** terminates an idle server. The server also self-quits after ~15 min idle or a ~2 h wall-clock cap, so a forgotten one cleans itself up.
+- **`--warm-server status`** prints the serving pid / idle-or-busy and the `editor args:` it was started with (exit 0 serving, 1 none); **`--warm-server stop`** terminates an idle server. The server also self-quits after ~15 min idle or a ~2 h wall-clock cap, so a forgotten one cleans itself up.
+- **Editor arguments (v1.79+).** `--warm-server start --editor-args "<args>"` starts the server with them. A `--test` run (with `--live` or plain) routes into a warm server only when the server was started with exactly the run's `--editor-args` — none counts as a value too. Otherwise: a warm server this toolbox launched and that is idle is restarted with the run's arguments (`=== --live: restarting the warm server with this run's --editor-args ===`); a busy one, one this toolbox did not launch, or your own open editor is left alone and the run boots a fresh editor, saying why. So a pass that needs editor arguments (a listen-server PIE, a `-cvarsini=` file) can use the warm server, and the arguments are never dropped silently. Mixing arguments between runs restarts the server each time; keep one argument set per series of `--live` runs. A bare `--warm-server start` leaves a serving server as it is, whatever its arguments.
 - **Window (v1.22+):** run *without* `--no-progress-window` and `--warm-server start` opens ONE LogViewer for the server's whole life — boot → idle → the test progress of routed `--live` runs (they execute inside it) → idle — closed by `--warm-server stop`. A live run reuses that window rather than popping a second. **This window is the point of v1.22, not a side effect** — v1.21 had made the warm server windowless and left an interactive user with no sign it existed. Suppress it for headless/CI and rapid-fire short runs; leave it visible when a human is waiting on a long operation. See the decision table above.
 - **Fidelity:** live/warm results are for **iteration**; a **fresh boot** (`--no-live`, or the clean `--build --test` build path) stays the **gate of record** for any "done" / "no regressions" claim. Re-run `--no-live` before reporting. *Measured 2026-07-25, so you know what this caveat is and isn't:* a full 1271-test suite through a warm server showed **no state accumulation** (throughput tracked test weight, not elapsed time) and **full verdict parity** with fresh boots (13 deterministic failures reproduced identically, 10-of-10 by name on the largest cluster). So the rule is about process freshness as a matter of principle — not a known divergence.
 - **`--build` handles the warm server for you (v1.25+).** It stops a warm server *this toolbox launched* before building, then proceeds. You do **not** need to `--warm-server stop` first. Ownership is checked against a launch sentinel (`pid` + process creation time since v1.34), so a server the toolbox does **not** own — in particular the user's own interactive editor — is never terminated; `--build` waits for that one instead.
