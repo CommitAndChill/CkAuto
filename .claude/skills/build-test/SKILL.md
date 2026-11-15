@@ -308,6 +308,31 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > - A toolbox older than v1.84 refuses a plugin file that has the key (exit 80), so v1.84 is vendored
 >   into every host before the pin bump that adds the first plugin entry.
 
+> **Upstream coverage (toolbox v1.85+, opt in per host).** A host's `AutomationGate.json` may carry
+> `"upstreamCoverage": { "mode": "fingerprint" }`. A plain `--test` there may then run a **Ck
+> subset**: it skips the functional AutoTests on upstream plugins' maps (CkTests' AutoTests level)
+> when nothing the toolbox fingerprints has changed since this clone's last complete full-Ck run.
+> Every C++ test, every net test and every renderer-only test still runs. So do the upstream map
+> tests the host lists as known reds, and those that failed in this clone in the last 14 days.
+>
+> - **Read the mode, then paste the toolbox's `Gate:` line; never compose your own.** The
+>   `[population] upstream coverage:` line says SUBSET or full-Ck and why. The line itself
+>   (population block, totals line, verdict recap) is `Gate: host-full, Ck subset N/M (last
+>   full-Ck <date> <log>)` or `Gate: host-full, full-Ck (<reason>)`.
+> - **A subset gate covers host changes, not Ck changes.** Moving or dirtying an upstream submodule
+>   forces full-Ck by itself (any untracked file counts). A host change that could affect Ck
+>   behaviour is bounded only by the 3-day / 20-commit age bound and by `--full-ck`.
+> - **Use `--full-ck` for** `--known-reds prune` (refused on a subset run), for the backstop full
+>   gate, and for any "clean tree" comparison.
+> - A subset run's lanes hold different tests from a full-Ck run's, so an order-dependent red can
+>   flip. A/B a NEW failure's group in the same mode the gate used.
+> - **The backstop reads these lines alongside `Gate: scoped`.** A merge closed on `Gate: host-full,
+>   Ck subset` did not run the skipped upstream map AutoTests. The next full-Ck gate is where they
+>   are judged, and the first full-Ck run says how many subset gates came in between.
+> - To force the next run full-Ck, delete `Saved/UnrealToolbox/UpstreamCoverage.json` (per clone).
+>   A toolbox older than v1.85 refuses the key (exit 80): add it in the same change that vendors
+>   v1.85.
+
 > **Renderer-only tests (toolbox v1.51+).** A test flagged `NonNullRHI` needs a real renderer, and a
 > headless (`-nullrhi`) editor does not list it at all. The toolbox discovers in both modes and runs
 > those tests in **one extra real-renderer editor (off-screen)**. With several editors (v1.55+) that
