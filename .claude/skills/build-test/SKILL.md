@@ -467,8 +467,11 @@ which reds are theirs.
   re-run any failed listed flakies alone.
 - **Copy a gate's `--output` log somewhere else before the next run**: the toolbox rotates
   `Saved/Logs`.
-- **Never run two gates on one machine at once** unless you mean to: the second one starves the
-  first, and load-sensitive tests go red.
+- **Two gates on one machine are fine on v1.81+**: they share the machine editor slots (see
+  **Machine editor budget** under Parallel lanes), so expect `waiting for an editor slot` lines, not
+  extra reds. Beside a gate run by an **older** toolbox they are not: it takes no lease and sizes its
+  lanes alone, so a v1.81 gate waits for its editors, then takes the 10-min escape and oversubscribes
+  the CPU. Wait for it, or vendor v1.81 there too. Two gates on older toolboxes still starve each other.
 
 ## Traps to avoid
 
@@ -531,7 +534,8 @@ Do **not** hardcode `--parallel` here — the toolbox sizes the lane count to th
 
 **Toolbox v1.39+ sizes this itself — you should not normally pass `--parallel` at all.** Test batches are
 spread over N concurrent headless editors, where N is derived from the machine: the lower of
-`(physicalCores + 2) / 3` and `(availableRAM - 4GB) / 6GB`, capped at 4. Tests matching a serial lane
+`(physicalCores + 2) / 3` and `0.75 x installed RAM / learned editor peak`, capped at 4 (v1.81; before
+it, `(availableRAM - 4GB) / 6GB` read once at start). Tests matching a serial lane
 (`Net`, `*Snapshot*`) stay pinned to one editor chain regardless, so multi-PIE suites never overlap.
 When a run has such a chain (v1.55+), the other tests are cut into twice as many lanes as there are
 editors, so an editor that finishes early keeps pulling work; the summary counts lanes, not editors
@@ -539,8 +543,32 @@ editors, so an editor that finishes early keeps pulling work; the summary counts
 An auto-sized run says so in its first lines:
 
 ```
-[utb --test] auto-sized to 3 concurrent editor(s) from 8 physical core(s) / 38 GB free (~6 GB per editor).
+[utb --test] auto-sized to 3 concurrent editor(s) from 8 physical core(s) / 63 GB installed (~7.7 GB peak per editor); each editor still starts only when the machine-wide editor budget (memory and editor slots) admits it. Pin it with --parallel N, or persist tests.maxParallel.
 ```
+
+**Machine editor budget (v1.81+): several gates on one machine share it.** The width above is an upper
+bound. Every test editor, from every v1.81+ toolbox on the machine (lanes, discovery, the regen pass, the
+renderer group, Gauntlet), takes a lease in `%LOCALAPPDATA%/UnrealToolbox/editor-budget/` and starts only
+when both hold:
+
+- fewer test editors run than the **machine editor slots**: `(physicalCores + 2) / 3` by default, 3 on 8
+  cores, counting `-Cmd` editors of older toolboxes and warm servers (your interactive `UnrealEditor.exe`
+  takes none);
+- available RAM, minus what running editors will still grow into, minus 4 GB, fits the editor's learned
+  peak (headless `tests.editorPeakMb`, real-renderer `tests.rendererEditorPeakMb`, per project).
+
+A held-back editor prints why and rechecks every 5 s:
+
+```
+[budget] [lane 2/6]: waiting for an editor slot: 3 of 3 machine editor slots in use (held: BusterBlock: 2 editor(s) ...; Mars: 1 editor(s) ...)
+```
+
+Waits are normal, not a hang. The run with fewer editors goes first, so two gates progress side by side
+(measured: BusterBlock + Mars together at 3 slots, 1h 33m against ~1h 45m back to back, extra reds
+within noise). A run with no editor that has waited 10 min starts one anyway, with a WARNING. Knobs:
+`--machine-editor-slots N` / `UNREAL_TOOLBOX_MACHINE_EDITOR_SLOTS` (each toolbox applies its own value,
+so keep every toolbox on the same one; 4 measured clean on an 8-core box), and `--no-editor-budget` /
+`UNREAL_TOOLBOX_NO_EDITOR_BUDGET=1` (the v1.80 behaviour).
 
 **Why it is derived rather than a fixed number.** This skill is vendored to every developer, and a CLI
 `--parallel` **overrides** the per-machine `tests.maxParallel` setting — so hardcoding a width here would
