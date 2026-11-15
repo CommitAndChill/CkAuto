@@ -291,6 +291,23 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > - A toolbox older than v1.56 refuses a file that has the key (exit 80), so the CkAuto pin with
 >   v1.56 lands in a project before its list does.
 
+> **Plugin deferred (toolbox v1.84+).** A Ck plugin's own `AutomationGate.json` may defer exact
+> tests: `"deferred": [ { "test": "<full test path>", "reason": "...", "added": "YYYY-MM-DD" } ]`.
+> Exact full paths only: a `"pattern"`, a `*`, a path that names a group of tests instead of one, a
+> test this build does not have, a test two plugins defer, or a test also listed as a known red in
+> any list exits `80` naming the entry. The `[population]` block says `plugin-deferred: N test(s)
+> left out of this run` and lists them (always with `--print-population`).
+>
+> - **These tests leave every host's merge gate, so CkPlugins owns them:** run
+>   `--test --no-live --include-deferred` on CkPlugins before every Ck pin bump that touches a
+>   deferred test's plugin, and at least weekly while any plugin defers a test. Read the
+>   `plugin-deferred:` line and treat its failures like any gate failure. Nothing schedules this run.
+> - **A Ck pin bump that brings a new deferral drops that test's entries from the host's own
+>   known-red list in the same change** (otherwise the host exits 80), and its PR names the real fix
+>   each dropped entry was waiting for.
+> - A toolbox older than v1.84 refuses a plugin file that has the key (exit 80), so v1.84 is vendored
+>   into every host before the pin bump that adds the first plugin entry.
+
 > **Renderer-only tests (toolbox v1.51+).** A test flagged `NonNullRHI` needs a real renderer, and a
 > headless (`-nullrhi`) editor does not list it at all. The toolbox discovers in both modes and runs
 > those tests in **one extra real-renderer editor (off-screen)**. With several editors (v1.55+) that
@@ -375,6 +392,14 @@ Everything is in `Saved/Logs/BuildTest.log` — build output first, then the edi
 1. **Run each NEW test alone**: fresh boot, one lane, list off -
    `--test --no-live --parallel 1 --known-reds off --test-pattern "<full test path>"`. Read the verdict
    from that run's own `Failed tests (N):` block (a pattern can also select sibling tests).
+   **Toolbox v1.84+ has already done a first pass:** after a gate's verdict, up to 10 NEW failures are
+   re-run once in a fresh editor (`=== Re-run of NEW failures ...`). Each line is an observation, not
+   a verdict: those tests shared one editor, so `failed again on re-run` with others in the group is
+   not yet "red alone", and `passed on re-run` is step 2's case. The block prints each test's alone
+   command with this run's flags; run those for step 1. The verdict and the exit code are repeated
+   after the block (`=== Verdict (repeated after the re-run) ===`) and never change. It is skipped,
+   with the reason, on a `--live` run, on exits other than 0/1, with more than 10 NEW, and with
+   `--no-new-rerun`; a test that ran over 2 min or died in flight is left out and listed.
 2. **Green alone** -> it fails only in the suite. That is NOT yet "not mine": a change that leaks
    shared state (an untracked entity, a console variable, a registry entry, a file on disk) reds a
    LATER test only in-suite. If your change touches anything shared, re-run that test's group (a
