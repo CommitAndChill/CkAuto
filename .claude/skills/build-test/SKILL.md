@@ -315,10 +315,32 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > Every C++ test, every net test and every renderer-only test still runs. So do the upstream map
 > tests the host lists as known reds, and those that failed in this clone in the last 14 days.
 >
+> **Net tests too (toolbox v1.87+, a second opt-in).** With `"netTests": true` beside the mode, a
+> subset run also skips the net tests (a whole `Net` segment in the name) that belong to an
+> upstream plugin. Names cannot tell: a host's own net tests are named `Ck.<Feature>.Net.*` too. So
+> the toolbox scans source at decision time. A net test is upstream-owned only when an
+> `IMPLEMENT_*AUTOMATION_TEST*` macro under an upstream plugin's `Source/` declares its name and no
+> host source file contains that quoted name; host-only, both and neither all run. The carry rules
+> are the same as for map tests. Upstream C++ tests that are not net tests always run.
+>
+> - **Net skipping turns itself off for one run, and says why**
+>   (`[population]   upstream net tests: all run - <reason>`): a host file that declares a
+>   `*Subsystem` class was edited, added or removed since the last full-Ck run (host subsystems are
+>   created inside every upstream net test's PIE world), the last full-Ck run recorded no such
+>   list, or a scan failed. Map skipping is not affected.
+> - **Read the ownership counts.** The net line ends `Ownership by source scan: U upstream-only, H
+>   host, X unresolved (run).` An unresolved name (in both, or in neither) is listed and runs. A
+>   full-Ck run prints the counts too, so `--print-population` shows them on any clone.
+> - A toolbox older than v1.87 refuses the `netTests` field (exit 80): add it in the same change
+>   that vendors v1.87.
+>
+> For both kinds:
+>
 > - **Read the mode, then paste the toolbox's `Gate:` line; never compose your own.** The
 >   `[population] upstream coverage:` line says SUBSET or full-Ck and why. The line itself
 >   (population block, totals line, verdict recap) is `Gate: host-full, Ck subset N/M (last
->   full-Ck <date> <log>)` or `Gate: host-full, full-Ck (<reason>)`.
+>   full-Ck <date> <log>)`, or with net skipping `Gate: host-full, Ck subset N/M (map a/b, net
+>   c/d; last full-Ck <date> <log>)`, or `Gate: host-full, full-Ck (<reason>)`.
 > - **A subset gate covers host changes, not Ck changes.** Moving or dirtying an upstream submodule
 >   forces full-Ck by itself (any untracked file counts). A host change that could affect Ck
 >   behaviour is bounded only by the 3-day / 20-commit age bound and by `--full-ck`.
@@ -327,8 +349,9 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > - A subset run's lanes hold different tests from a full-Ck run's, so an order-dependent red can
 >   flip. A/B a NEW failure's group in the same mode the gate used.
 > - **The backstop reads these lines alongside `Gate: scoped`.** A merge closed on `Gate: host-full,
->   Ck subset` did not run the skipped upstream map AutoTests. The next full-Ck gate is where they
->   are judged, and the first full-Ck run says how many subset gates came in between.
+>   Ck subset` did not run the skipped upstream tests (map AutoTests, and net tests when the line
+>   has a `net c/d` part). The next full-Ck gate is where they are judged, and the first full-Ck
+>   run says how many subset gates came in between.
 > - To force the next run full-Ck, delete `Saved/UnrealToolbox/UpstreamCoverage.json` (per clone).
 >   A toolbox older than v1.85 refuses the key (exit 80): add it in the same change that vendors
 >   v1.85.
