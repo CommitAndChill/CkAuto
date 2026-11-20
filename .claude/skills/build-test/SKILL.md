@@ -361,6 +361,9 @@ Single-shot needs the test pattern up front (both phases run in one command). De
 > those tests in **one extra real-renderer editor (off-screen)**. With several editors (v1.55+) that
 > is one more group, `[renderer]`, picked up by the first editor that runs out of lanes while the
 > others are still going; on one editor, and after `--build`, it still runs after the headless lanes.
+> From v1.88, when free memory at the start cannot hold the real-renderer editor beside the other
+> editors, the renderer group is handed out first instead (`[schedule] renderer group handed out first: ...`),
+> so it does not wait behind the lanes and then run alone at the end.
 > The population block reports them as `renderer-only: N`, and the summary ends with
 > `Renderer-only: N test(s) ran in a real-renderer editor`.
 >
@@ -538,6 +541,10 @@ which reds are theirs.
   from its `Automation RunTests a+b+c` line in the log and run them as one targeted judged run
   (repeat `--test-pattern` once per test, v1.79+: a test runs when it matches any of them), then
   re-run any failed listed flakies alone.
+- **`RUN INCOMPLETE` with the `-CkDeferredCmdsFile` hook hint (v1.88+)**: a test editor that never logged
+  `[DeferredCmdsFile] Queued` and never answered RunTests within 60 s of engine init is stopped, and the
+  run ends there (exit 1). The project's CkFoundation lacks the hook that reads the test list from a
+  file, or could not read the file: update CkFoundation, do not re-run.
 - **Copy a gate's `--output` log somewhere else before the next run**: the toolbox rotates
   `Saved/Logs`.
 - **Two gates on one machine are fine on v1.81+**: they share the machine editor slots (see
@@ -553,6 +560,9 @@ These bit before and the toolbox docs don't all flag them:
 - **Non-zero exit from `--test` is the normal way the toolbox reports test failures.** It is *not* a toolbox bug. Read the summary block to know what actually happened.
 - **Don't grep the log for `Display:` lines first.** Test outcomes live in `LogAutomationController` lines (`Test Started`, `Test Completed. Result={…}`) and the trailing summary block. Anything else is noise.
 - **Don't try to resolve the engine path.** If a build or test fails with "Plugin X failed to load" / "could not find module", that's an engine-selection problem — escalate to the user, do not hunt down DLLs yourself.
+- **Run gates with the desktop unlocked.** With the lock screen up the clipboard cannot be opened
+  (`OpenClipboard failed`, error 5), so a gate run while the desktop is locked fails the clipboard copy
+  tests. Grep the log for `OpenClipboard` before attributing one of those reds.
 - **Don't poll background tasks.** You are notified on completion. Polling reads partial flushes and gives misleading state.
 - **Don't time out aggressively.** 5-30 min is normal for a CK editor build. 10 min is the floor; raise it if you've seen this project run longer historically.
 - **Angelscript bindings regenerate on editor startup** — and `--test` spins up the editor — so if your C++ change exposed a new API and your AS callsites use it, the test phase exercising the AS path implicitly verifies the AS regeneration too.
@@ -635,6 +645,10 @@ A held-back editor prints why and rechecks every 5 s:
 ```
 [budget] [lane 2/6]: waiting for an editor slot: 3 of 3 machine editor slots in use (held: BusterBlock: 2 editor(s) ...; Mars: 1 editor(s) ...)
 ```
+
+From v1.88, when an editor of the same run has waited longer and fits now, it goes first (`... has
+waited longer (D); it goes first`); after 60 s of yielding to a waiter that never starts, the run prints a
+WARNING and stops waiting for it.
 
 Waits are normal, not a hang. The run with fewer editors goes first, so two gates progress side by side
 (measured: BusterBlock + Mars together at 3 slots, 1h 33m against ~1h 45m back to back, extra reds
