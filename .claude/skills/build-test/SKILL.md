@@ -403,7 +403,7 @@ named a config in Phase 1.) The test phase only runs if the build succeeded.
 
 One progress LogViewer window opens at build start and is reused through the test phase (toolbox v1.15+), so the user watches build → editor boot → tests in a single window. Nothing to launch or wire — it's default-on whenever `--output` is set. As of toolbox v1.40, it spawns **minimized to the taskbar with a brief flash** and does not take focus — the run no longer yanks the user's foreground window away mid-task. Per-run override: `--progress-window <focus|background|minimized|minimized-flash>`; the persistent preference lives in the toolbox's per-project `settings.json` (`progressWindow.mode`). On a true-headless / no-desktop machine (CI), add `--no-progress-window`.
 
-As of toolbox v1.58 the window **closes itself when the run exits 0** and stays open on any other exit code, so a window still on the taskbar after a run is a run that needs reading. Only exit 0 counts: the no-verdict codes (75-82) keep the window, and so does a toolbox that was killed before it finished. The run prints `Progress window: closed (...)` when it closes one. Per-run override: `--progress-window-close <on-success|never|always>` (`never` is the behaviour before v1.58); the persistent preference is `progressWindow.close` in the same `settings.json`. The warm-server window is not affected. Agent guidance: don't pass it by default; pass `never` only when the user asks to keep the window after a green run.
+As of toolbox v1.58 the window **closes itself when the run exits 0** and stays open on any other exit code, so a window still on the taskbar after a run is a run that needs reading. Only exit 0 counts: the no-verdict codes (75-82, 87) keep the window, and so does a toolbox that was killed before it finished. The run prints `Progress window: closed (...)` when it closes one. Per-run override: `--progress-window-close <on-success|never|always>` (`never` is the behaviour before v1.58); the persistent preference is `progressWindow.close` in the same `settings.json`. The warm-server window is not affected. Agent guidance: don't pass it by default; pass `never` only when the user asks to keep the window after a green run.
 
 As of toolbox v1.46 / LogViewer v1.7, the `--output` log also carries `##ftx[progress …]` marker lines that drive that window's per-stage progress strip, taskbar-button progress and title. They are written to the file only — stdout is unchanged — and are machine lines: skip them when reading the log. None of the grep patterns below match them, and the `=== Test summary ===` block still comes after the last test marker (exception: a failed `--build` in a combined run ends with a `tests st=skip` marker).
 
@@ -451,6 +451,19 @@ Everything is in `Saved/Logs/BuildTest.log` — build output first, then the edi
    after the block (`=== Verdict (repeated after the re-run) ===`) and never change. It is skipped,
    with the reason, on a `--live` run, on exits other than 0/1, with more than 10 NEW, and with
    `--no-new-rerun`; a test that ran over 2 min or died in flight is left out and listed.
+   **Toolbox v1.91+ re-runs starved failures before the verdict** (`=== Load retry: ... ===`). A NEW
+   failure that ran below 0.75x its own usual frame rate while the tests overlapping it were slow too
+   (or, with fewer than 3 of them, its window was at least 70 % busy, or memory was in a trough) is
+   re-run alone, up to twice, after waiting up to 120 s for the machine to calm down. It counts as
+   passed (`Load-forgiven: N` in the summary) only if it then passes at 0.75x its usual rate or better.
+   Never re-run: a test with no frame-rate history, one that ran slow while its neighbours kept their
+   rate, and one listed `flaky` because it failed at its usual rate in this clone in the last 30 days
+   (`tests.loadCleanFailures`). A `FORGIVEN (starved)` row is not proof of "not mine": a pass alone
+   also forgives an order-dependent regression, and a row that says `forgiven N time(s) before`
+   (`tests.loadForgiven`) is a flaky or slow test to fix. Once a flaky test's cause is fixed, delete
+   its `tests.loadCleanFailures` entry in `%APPDATA%/UnrealToolbox/<Project>_<hash>/settings.json`,
+   or it stays unforgivable for 30 days. `--no-load-retry` turns the retry off. More than 10 starved
+   NEW failures exits 87 (see **Traps**).
 2. **Green alone** -> it fails only in the suite. That is NOT yet "not mine": a change that leaks
    shared state (an untracked entity, a console variable, a registry entry, a file on disk) reds a
    LATER test only in-suite. If your change touches anything shared, re-run that test's group (a
@@ -458,7 +471,8 @@ Everything is in `Saved/Logs/BuildTest.log` — build output first, then the edi
    change before calling it load-sensitive. Only then does it qualify as `flaky` (red in a full
    gate, green alone). Read the gate log's load lines first (toolbox v1.72, after `=== Known reds ===`):
    the machine-load block, then one line per failure. `load-suspect` = it ran below 0.75x its own
-   frame-rate history, or the machine was saturated; `clean` = it held its rate, so starvation is not
+   frame-rate history, or, with no history, its window averaged 70 % system CPU or more (v1.90; before
+   that, 90 % system or 25 % compilers); `clean` = it held its rate, so starvation is not
    the explanation. They are report only: verdicts and exit codes are unchanged.
 3. **Red alone** -> prove whose it is before touching the list: revert only your change (or move the
    submodule you bumped back to its previous pin), rebuild, and run just those tests alone again.
@@ -552,6 +566,17 @@ which reds are theirs.
   extra reds. Beside a gate run by an **older** toolbox they are not: it takes no lease and sizes its
   lanes alone, so a v1.81 gate waits for its editors, then takes the 10-min escape and oversubscribes
   the CPU. Wait for it, or vendor v1.81 there too. Two gates on older toolboxes still starve each other.
+- **Builds and gates can run side by side on v1.90+, in any number of worktrees.** Do not queue a
+  gate behind a build, or a build behind a gate. A toolbox `--build`, cook or package caps its own CPU
+  while another toolbox's test editors run (`[cpu-yield] build capped at N% of the machine: ...`,
+  re-decided every 5 s, lifted when they stop; the summary says how long it ran capped), so the gate's
+  tests keep about 0.87x their usual speed and the build runs about 2x slower meanwhile. Test editors
+  from every gate share the machine editor slots (v1.81). Load from outside the toolbox (an IDE build,
+  Live Coding, a game) is not capped: v1.91's load retry re-runs the failures it starves, and exit 87
+  says when the machine was too busy to judge. The caveat is the other worktree's toolbox: a build by a
+  toolbox older than v1.90 is not capped, so check its `CkAuto` pin before relying on this.
+  `--no-build-cpu-yield` or `UNREAL_TOOLBOX_NO_BUILD_CPU_YIELD=1` runs a build uncapped;
+  `UNREAL_TOOLBOX_BUILD_CPU_TARGET` (20-95, default 55) moves the target.
 
 ## Traps to avoid
 
@@ -568,6 +593,10 @@ These bit before and the toolbox docs don't all flag them:
 - **Angelscript bindings regenerate on editor startup** — and `--test` spins up the editor — so if your C++ change exposed a new API and your AS callsites use it, the test phase exercising the AS path implicitly verifies the AS regeneration too.
 - **Do not commit `Saved/Logs/BuildTest.log`** (or the `Build-Editor.log` / `Test-Editor.log` of the separate-logs variant). They're scratch output. The standard `Saved/` is gitignored at the project root, but double-check if you ever stage selectively.
 - **Don't edit AngelScript/source during a test-only run beside a live editor.** A saved `.as` edit makes the live editor rewrite `Script/Generated/*` mid-run and the headless test editor logs `Full Reload is required` — grep for that phrase before trusting a red run (see the Quiescence protocol). Freeze edits until the completion notification.
+- **Exit `87` means the machine was too busy to judge the gate (toolbox v1.91).** More than 10 NEW
+  failures ran starved (`=== LOAD-OVERLOADED: ... Exiting 87. ===`), so none was re-run. It replaces
+  exit 1 only when every NEW failure ran starved; one at its usual rate keeps exit 1. It is no verdict
+  either way: re-run the gate with the machine quieter (builds, games, browsers closed).
 - **Exit `80` means the gate population was refused — no verdict was produced.** `AutomationGate.json` is present but broken (bad JSON, unknown key), or a declared root (file or `--project-prefix`) matches no discovered test. The `[population] ERROR:` line names it. Fix the file or the root name; try `--discover-fresh` if the root is new. After `--build`, where the test list is re-read mid-run, the tests still run and the exit becomes 80 at the end. It is not a build failure even though the summary block may be missing. Since v1.50 exit 80 also covers a `knownReds` entry naming a test that no longer exists (`[known-reds] ERROR:` names it; fix the entry, or `--known-reds prune` removes it), and a broken `knownReds` list (missing `reason`/`evidence`/`added`, bad `status`, a duplicate).
 - **Exit `82` means this clone was built against an older engine build, so no editor was started (toolbox v1.64).** On the Shared editor, a build in another clone that relinks an engine module gives the engine a new BuildId (stock UE); this clone's manifests keep the old one, and its editor would skip its modules and die with "module '...' could not be found". The `=== STALE MODULES` block names both BuildIds and when the engine was relinked. Fix: add `--build` to the same command (`--warm-server` and `--launch-editor` cannot take it: run `--build` first). It is not a test failure, and the toolbox does not build on its own. A `[modules] WARNING` about plugin manifests alone does not stop the run; if that editor then dies at plugin load, the run stops with 82 instead of respawning.
 - **Exit `83` means a Shared-environment build was refused before UnrealBuildTool ran (toolbox v1.69).** The engine has one debug-symbols policy (`Engine/Saved/UnrealBuildTool/BuildConfiguration.xml`: Full, or None) and this clone's setting does not match it, or a machine/user UBT config or `UnrealBuildTool_*` env var overrides it. The refusal names the mismatch. It is not a compile failure: fix the clone's Debug symbols in Project Storage (or the stray config), then rebuild. Escalate to the user rather than editing the engine file.
@@ -618,8 +647,13 @@ Do **not** hardcode `--parallel` here — the toolbox sizes the lane count to th
 **Toolbox v1.39+ sizes this itself — you should not normally pass `--parallel` at all.** Test batches are
 spread over N concurrent headless editors, where N is derived from the machine: the lower of
 `(physicalCores + 2) / 3` and `0.75 x installed RAM / learned editor peak`, capped at 4 (v1.81; before
-it, `(availableRAM - 4GB) / 6GB` read once at start). Tests matching a serial lane
-(`Net`, `*Snapshot*`) stay pinned to one editor chain regardless, so multi-PIE suites never overlap.
+it, `(availableRAM - 4GB) / 6GB` read once at start). From v1.89, tests matching a serial lane
+(`Net`, `*Snapshot*`) run in the lanes with everything else (`[schedule] N net/snapshot test(s)
+(tests.serialLanePatterns) run in the lanes, not in one editor chain`): on UE 5.8.4 each editor's PIE
+server binds the next free port, so multi-PIE editors no longer collide (Mars full gate 2h 7m -> 1h 20m).
+`--serial-net-chain` or `tests.serialNetChain: true` puts them back in one editor chain, and so do
+`--serial-lane`, `--net-batch-size` or a changed `serialLanePatterns`. A host that still carries SPUD
+needs the chain. Before v1.89 they always ran in that chain.
 When a run has such a chain (v1.55+), the other tests are cut into twice as many lanes as there are
 editors, so an editor that finishes early keeps pulling work; the summary counts lanes, not editors
 (`6 lane(s)` on 3 editors).
